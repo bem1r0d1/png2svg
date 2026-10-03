@@ -371,6 +371,75 @@ fn straight_side(s: &[P], tol: f64) -> Option<(P, P)> {
     ok.then_some((c, d))
 }
 
+/// Smooths a closed contour along its arc length (Gaussian, σ in px) while
+/// keeping real corners pinned. Each contour is smoothed on its own, so thin
+/// outlines keep their width and neighbouring shapes never merge — unlike a
+/// blur of the raster.
+pub(crate) fn smooth_contour(raw: &[P], sigma: f64, corner_angle: f64) -> Vec<P> {
+    let pts = dedup(raw);
+    if pts.len() < 8 {
+        return pts;
+    }
+    let poly = Poly::new(&pts);
+    // Small loops would collapse: limit σ to a fraction of the perimeter.
+    let sigma = sigma.min(poly.len / 14.0);
+    if sigma < 0.2 {
+        return pts;
+    }
+    // Uniform resampling (0.5 px) so the kernel is a fixed number of samples.
+    let h = 0.5;
+    let n = ((poly.len / h).round() as usize).max(8);
+    let step = poly.len / n as f64;
+    let sp: Vec<P> = (0..n).map(|i| poly.at(i as f64 * step)).collect();
+    let spoly = Poly::new(&sp);
+    let mut corners = find_corners(&spoly, (2.0 * sigma).max(2.0), corner_angle);
+    // A "corner" whose two sides are closer than the smoothing scale is the
+    // tip of a thin spur (texture / noise): smooth it away instead of pinning.
+    corners.retain(|&c| {
+        let s0 = spoly.cum[c];
+        spoly.at(s0 - 2.0 * sigma).dist(spoly.at(s0 + 2.0 * sigma)) > 0.6 * sigma
+    });
+    corners.sort_unstable();
+    let rad = ((3.0 * sigma) / step).ceil() as isize;
+    let kernel: Vec<f64> = (-rad..=rad)
+        .map(|k| {
+            let d = k as f64 * step;
+            (-d * d / (2.0 * sigma * sigma)).exp()
+        })
+        .collect();
+    // Segment id of every sample (between consecutive corners) so the kernel
+    // never averages across a corner.
+    let mut seg = vec![0usize; n];
+    if !corners.is_empty() {
+        let mut s = 0;
+        for i in 0..n {
+            let idx = (corners[0] + i) % n;
+            if i > 0 && corners.binary_search(&idx).is_ok() {
+                s += 1;
+            }
+            seg[idx] = s;
+        }
+    }
+    let is_corner = |i: usize| corners.binary_search(&i).is_ok();
+    (0..n)
+        .map(|i| {
+            if is_corner(i) {
+                return sp[i];
+            }
+            let (mut acc, mut wsum) = (P::default(), 0.0);
+            for (k, &wk) in kernel.iter().enumerate() {
+                let j = (i as isize + k as isize - rad).rem_euclid(n as isize) as usize;
+                if seg[j] != seg[i] && !is_corner(j) {
+                    continue;
+                }
+                acc = acc + sp[j] * wk;
+                wsum += wk;
+            }
+            acc * (1.0 / wsum)
+        })
+        .collect()
+}
+
 fn polygon(pts: &[P]) -> FittedLoop {
     FittedLoop {
         start: pts.first().copied().unwrap_or_default(),

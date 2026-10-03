@@ -20,7 +20,8 @@ pub(crate) struct Layer {
     pub loops: Vec<Vec<P>>,
 }
 
-pub(crate) fn build_layers(l: &Labels, pal: &Palette, smoothing: f32) -> Vec<Layer> {
+/// Contours enclosing less than `min_area` px² (islands or holes) are dropped.
+pub(crate) fn build_layers(l: &Labels, pal: &Palette, smoothing: f32, min_area: f64) -> Vec<Layer> {
     let n = l.w * l.h;
     let transparent = pal.transparent_index().map(|i| i as u16);
     let mut area = vec![0usize; pal.colors.len()];
@@ -67,7 +68,7 @@ pub(crate) fn build_layers(l: &Labels, pal: &Palette, smoothing: f32) -> Vec<Lay
         gaussian_blur(&mut field, l.w, l.h, smoothing);
         preserve_thin_lines(&mut field, l.w, l.h);
         let mut loops = iso_contours(&field, l.w, l.h);
-        loops.retain(|lp| polygon_area(lp).abs() >= 0.3);
+        loops.retain(|lp| polygon_area(lp).abs() >= min_area.max(0.3));
         if !loops.is_empty() {
             layers.push(Layer {
                 label: lab,

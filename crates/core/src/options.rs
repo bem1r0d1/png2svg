@@ -130,6 +130,8 @@ pub(crate) struct Params {
     pub corner_scale: f64,
     /// Max distance (px) a corner may move to the intersection of its sides.
     pub corner_reach: f64,
+    /// Contour smoothing σ (px of arc), 0 = off.
+    pub contour_sigma: f64,
     pub snap_axes: bool,
     pub precision: u8,
     /// Max deviation (px) for replacing a contour by an exact primitive; 0 = off.
@@ -150,6 +152,16 @@ impl Params {
             // Noise shifts the averages: near-white / near-black become pure.
             self.pure_snap = 0.02;
         }
+    }
+
+    /// Contour smoothing (px of arc) applied before fitting.
+    pub fn apply_contour_smoothing(&mut self, sigma: f32) {
+        let s = sigma as f64;
+        self.contour_sigma = s;
+        // Blobs smaller than the smoothing scale are texture, not shapes.
+        self.speckle_area = self.speckle_area.max((s * s * 5.0) as usize);
+        self.fit_tolerance += 0.08 * s;
+        self.corner_scale += 0.5 * s;
     }
 
     /// Loosens fitting for smoothed (pixelated / aliased / noisy) input so the
@@ -209,6 +221,7 @@ impl Params {
             corner_angle: (o.corner_threshold as f64 + corner_bias).to_radians(),
             corner_scale: 1.5 + 1.5 * smooth,
             corner_reach: 2.5,
+            contour_sigma: 0.0,
             snap_axes: o.snap_axes,
             precision: o.precision.min(4),
             shape_tolerance: if o.shapes { 0.3 + 0.35 * smooth } else { 0.0 },

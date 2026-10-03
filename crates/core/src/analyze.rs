@@ -286,25 +286,41 @@ pub(crate) fn edge_aa_ratio(l: &Labels) -> f32 {
     }
 }
 
-/// Gaussian blur σ (px) for the coverage fields, from the input analysis.
-pub(crate) fn edge_smoothing(aa_ratio: f32, noise: f32, edge_width: f32, size: usize) -> f32 {
-    // Blurry edges: the sub-pixel position is less certain, smooth accordingly.
+/// How much to smooth, split in two very different tools:
+/// * `field` — Gaussian blur of the coverage fields (px). Removes pixel-level
+///   staircases and noise but also erodes thin features, so it stays small.
+/// * `contour` — smoothing of each traced contour along its own length (px of
+///   arc). Removes wobble of any wavelength without merging neighbouring
+///   shapes or thinning outlines; real corners are pinned.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct Smoothing {
+    pub field: f32,
+    pub contour: f32,
+}
+
+pub(crate) fn edge_smoothing(aa_ratio: f32, noise: f32, edge_width: f32, size: usize) -> Smoothing {
+    let mut field = 0f32;
+    let mut contour = 0f32;
+    // Blurry edges: the sub-pixel position is less certain.
     // (JPEG artefacts also widen edges; noise is handled by its own term.)
-    let mut s = if noise < 0.006 {
-        ((edge_width - 1.8) * 0.5).clamp(0.0, 1.5)
-    } else {
-        0.0
-    };
+    if noise < 0.006 {
+        let b = ((edge_width - 1.8) * 0.5).clamp(0.0, 1.5);
+        field = field.max(b.min(1.0));
+        contour = contour.max(b * 1.5);
+    }
     if aa_ratio < 0.25 {
-        s = s.max(0.8); // aliased: 1 px staircases
+        field = field.max(0.8); // aliased: 1 px staircases
+        contour = contour.max(1.2);
     }
-    // Large images: wobble of a few pixels is drawing / compression texture,
-    // not detail; smoothing proportional to the size removes it invisibly.
-    // (Clean vector renders are exact at any size and are left alone.)
+    // Large, not perfectly clean images: wobble of a few pixels is drawing /
+    // compression texture, not detail. Clean vector renders are left alone.
     if noise > 0.003 {
-        s = s.max(((size as f32 - 600.0) * 0.0015).clamp(0.0, 2.5));
+        contour = contour.max(((size as f32 - 600.0) * 0.002).clamp(0.0, 3.5));
     }
-    s.max(((noise - 0.006) * 60.0).clamp(0.0, 1.5))
+    let n = ((noise - 0.006) * 60.0).clamp(0.0, 1.5);
+    field = field.max(n.min(1.2));
+    contour = contour.max(n * 2.0);
+    Smoothing { field, contour }
 }
 
 /// Separable Gaussian blur with clamp-to-edge borders (shapes touching the

@@ -164,20 +164,36 @@ pub fn convert(rgba: &[u8], width: u32, height: u32, opts: &Options) -> Result<O
     let mut labels = segment::assign(&r, &mixed, &pal, 0.03 + 2.0 * noise);
     segment::resolve_blend_layers(&mut labels, &r, &pal);
     let aa_ratio = analyze::edge_aa_ratio(&labels);
-    let smoothing = opts.smoothing.map(|s| s.max(0.0)).unwrap_or_else(|| {
-        analyze::edge_smoothing(
+    let sm = match opts.smoothing {
+        Some(v) => {
+            let v = v.max(0.0);
+            analyze::Smoothing {
+                field: v.min(1.0),
+                contour: v * 1.5,
+            }
+        }
+        None => analyze::edge_smoothing(
             aa_ratio,
             noise,
             analyze::edge_width(&mixed, &labels),
             (tw.max(th) as f64 * xf.s) as usize,
-        )
-    });
+        ),
+    };
+    let smoothing = sm.field;
     prm.apply_smoothing(smoothing, unit);
+    prm.apply_contour_smoothing(sm.contour);
     if noise > 0.01 {
         segment::absorb_ringing(&mut labels, &pal, 0.08);
     }
     segment::remove_speckles(&mut labels, prm.speckle_area);
-    let layers = layers::build_layers(&labels, &pal, smoothing);
+    // Contour-level speckle filter (islands inside fields that pixel-level
+    // speckle removal cannot see), only where smoothing is active.
+    let min_loop = if sm.contour > 0.1 {
+        prm.speckle_area as f64 * 0.6
+    } else {
+        0.3
+    };
+    let layers = layers::build_layers(&labels, &pal, smoothing, min_loop);
 
     let fitted: Vec<Vec<Fitted>> = layers
         .iter()
@@ -224,7 +240,7 @@ pub fn convert(rgba: &[u8], width: u32, height: u32, opts: &Options) -> Result<O
         bytes: svg.len(),
         noise,
         pixel_grid: block,
-        smoothing,
+        smoothing: sm.field.max(sm.contour),
     };
     Ok(Output {
         svg,
@@ -297,6 +313,17 @@ struct Fitted {
 }
 
 fn fit_contour(raw: &[geom::P], prm: &options::Params) -> Fitted {
+    let smoothed;
+    let raw = if prm.contour_sigma > 0.1 {
+        smoothed = fit::smooth_contour(
+            raw,
+            prm.contour_sigma,
+            prm.corner_angle + 10f64.to_radians(),
+        );
+        &smoothed[..]
+    } else {
+        raw
+    };
     if prm.shape_tolerance > 0.0 {
         if let Some(shape) = shapes::detect(raw, prm.shape_tolerance) {
             let ccw = geom::polygon_area(raw) > 0.0;
@@ -579,7 +606,7 @@ mod accuracy_tests {
         let prm = options::Params::resolve(&Options::default(), Preset::Logo, 64, 64);
         let pal = quantize::build_palette(&r, &mixed, &prm);
         let labels = segment::assign(&r, &mixed, &pal, 0.03);
-        let layers = layers::build_layers(&labels, &pal, 0.0);
+        let layers = layers::build_layers(&labels, &pal, 0.0, 0.3);
         let lp = &layers[1].loops[0];
         let mut maxe: f64 = 0.0;
         for p in lp {
