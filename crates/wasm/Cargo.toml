@@ -1,0 +1,13 @@
+[package]
+name = "png2svg-wasm"
+description = "WebAssembly build of png2svg-core with a tiny C ABI (no wasm-bindgen tooling needed)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+png2svg-core = { path = "../core", features = ["serde"] }
+serde_json = "1"

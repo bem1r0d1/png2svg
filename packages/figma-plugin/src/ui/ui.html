@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>png2svg</title>
+<style>/*__CSS__*/</style>
+</head>
+<body>
+<div class="topbar">
+  <strong>png2svg</strong>
+  <span class="muted">PNG → SVG без шума, пикселей и ступенек</span>
+  <span class="links">
+    <a href="png2svg-figma-plugin.zip">Figma-плагин</a>
+    <a href="report/">Качество</a>
+    <a href="https://github.com/bem1r0d1/png2svg">GitHub</a>
+  </span>
+</div>
+<main>
+  <header>
+    <div class="source">
+      <span id="source-name">Нет изображения</span>
+      <span id="source-size" class="muted"></span>
+    </div>
+    <div class="seg" role="tablist" id="view-mode">
+      <button data-view="original">Оригинал</button>
+      <button data-view="split" class="on">Сравнить</button>
+      <button data-view="vector">Вектор</button>
+    </div>
+  </header>
+
+  <section id="preview" class="preview empty">
+    <div class="stage" id="stage">
+      <img id="img-original" alt="">
+      <div id="img-vector"></div>
+      <div id="split-handle" hidden></div>
+    </div>
+    <div class="placeholder" id="placeholder">
+      <p id="placeholder-text">Выделите слой с изображением или перетащите PNG сюда</p>
+      <label class="button secondary">Выбрать файл<input type="file" id="file" accept="image/png,image/jpeg,image/webp" hidden></label>
+    </div>
+    <div class="busy" id="busy" hidden><span class="spinner"></span></div>
+  </section>
+
+  <div class="stats" id="stats"></div>
+  <div class="stats" id="detected"></div>
+  <div class="palette" id="palette"></div>
+
+  <section class="controls">
+    <div class="row">
+      <label>Пресет</label>
+      <div class="seg wide" id="preset">
+        <button data-preset="auto" class="on">Авто</button>
+        <button data-preset="logo">Логотип</button>
+        <button data-preset="icon">Иконка</button>
+        <button data-preset="illustration">Иллюстрация</button>
+      </div>
+    </div>
+    <div class="row">
+      <label for="colors">Цвета</label>
+      <div class="inline">
+        <input type="checkbox" id="colors-auto" checked><label for="colors-auto" class="check">авто</label>
+        <input type="number" id="colors" min="1" max="64" value="8" disabled>
+      </div>
+    </div>
+    <div class="row">
+      <label for="detail">Детализация</label>
+      <input type="range" id="detail" min="0" max="1" step="0.05" value="0.5">
+    </div>
+    <div class="row">
+      <label for="smoothness">Гладкость</label>
+      <input type="range" id="smoothness" min="0" max="1" step="0.05" value="0.5">
+    </div>
+    <div class="row">
+      <label for="corner">Углы</label>
+      <input type="range" id="corner" min="20" max="120" step="5" value="60" title="Порог угла: меньше — больше острых углов">
+    </div>
+    <div class="row">
+      <label for="smoothing">Сглаживание</label>
+      <div class="inline">
+        <input type="range" id="smoothing" min="-0.1" max="3" step="0.1" value="-0.1" title="Сглаживание краёв (px): убирает ступеньки, шум и пикселизацию. Крайнее левое — авто">
+        <span id="smoothing-value" class="muted value">авто</span>
+      </div>
+    </div>
+    <div class="row">
+      <label for="speckle">Мин. площадь</label>
+      <div class="inline">
+        <input type="range" id="speckle" min="0" max="100" step="1" value="0" title="Области меньше этой площади (px²) вливаются в соседние; 0 — авто">
+        <span id="speckle-value" class="muted value">авто</span>
+      </div>
+    </div>
+    <div class="row toggles">
+      <span><input type="checkbox" id="shapes" checked><label for="shapes" class="check" title="Круги, эллипсы и прямоугольники становятся родными фигурами Figma">Фигуры</label></span>
+      <span><input type="checkbox" id="separate" checked><label for="separate" class="check" title="Каждая фигура — отдельный слой (иначе один слой на цвет)">Раздельно</label></span>
+      <span><input type="checkbox" id="snap" checked><label for="snap" class="check">Оси</label></span>
+      <span><input type="checkbox" id="denoise" checked><label for="denoise" class="check" title="Убирать шум и артефакты JPEG">Шум</label></span>
+      <span><input type="checkbox" id="depixelate" checked><label for="depixelate" class="check" title="Восстанавливать гладкие формы из пиксельных (увеличенных) картинок">Пиксели</label></span>
+      <span><input type="checkbox" id="match" checked><label for="match" class="check" title="Подогнать цвета к стилям и переменным документа и привязать их">Стили</label></span>
+    </div>
+  </section>
+
+  <footer>
+    <span id="message" class="muted"></span>
+    <div class="actions">
+      <button class="button secondary" id="insert-beside" disabled>Вставить рядом</button>
+      <button class="button primary" id="insert-replace" disabled>Заменить</button>
+    </div>
+  </footer>
+</main>
+<script>/*__JS__*/</script>
+</body>
+</html>

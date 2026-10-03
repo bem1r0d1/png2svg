@@ -1,0 +1,146 @@
+{
+  "badge": {
+    "ssim": 0.9975382999636797,
+    "mean_de": 0.09877674598712474,
+    "p99_de": 3.1190145760774612,
+    "layers": 2,
+    "segments": 26,
+    "bytes": 742
+  },
+  "badge-jpeg": {
+    "ssim": 0.9837758408687749,
+    "mean_de": 0.5670052446762566,
+    "p99_de": 11.024390161037445,
+    "layers": 3,
+    "segments": 47,
+    "bytes": 1255
+  },
+  "close-colors": {
+    "ssim": 0.9998864074543831,
+    "mean_de": 0.006812260700371553,
+    "p99_de": 0.0,
+    "layers": 4,
+    "segments": 20,
+    "bytes": 417
+  },
+  "flat-illustration": {
+    "ssim": 0.9977254683211383,
+    "mean_de": 0.04205499392158648,
+    "p99_de": 1.459149643778801,
+    "layers": 7,
+    "segments": 152,
+    "bytes": 4420
+  },
+  "flat-illustration-jpeg": {
+    "ssim": 0.994290948842528,
+    "mean_de": 0.31015641558011947,
+    "p99_de": 3.6043833941221237,
+    "layers": 10,
+    "segments": 616,
+    "bytes": 19649
+  },
+  "glyphs": {
+    "ssim": 0.9997275087188051,
+    "mean_de": 0.02200163965527382,
+    "p99_de": 0.0,
+    "layers": 2,
+    "segments": 34,
+    "bytes": 835
+  },
+  "glyphs-aliased": {
+    "ssim": 0.9957230829534268,
+    "mean_de": 0.2123714410441203,
+    "p99_de": 9.41208004951477,
+    "layers": 2,
+    "segments": 33,
+    "bytes": 812
+  },
+  "icon-gear": {
+    "ssim": 0.9851620204657585,
+    "mean_de": 0.43520543452662724,
+    "p99_de": 12.425284832715988,
+    "layers": 1,
+    "segments": 21,
+    "bytes": 601
+  },
+  "icon-gear-24px": {
+    "ssim": 0.9740605459258118,
+    "mean_de": 1.7074448195570666,
+    "p99_de": 24.15974587202072,
+    "layers": 1,
+    "segments": 25,
+    "bytes": 799
+  },
+  "icon-heart": {
+    "ssim": 0.9918223537447963,
+    "mean_de": 0.2997654935825267,
+    "p99_de": 12.032251060009003,
+    "layers": 1,
+    "segments": 5,
+    "bytes": 351
+  },
+  "icon-heart-24px": {
+    "ssim": 0.989676329259973,
+    "mean_de": 0.5251096341655486,
+    "p99_de": 14.170587062835693,
+    "layers": 1,
+    "segments": 6,
+    "bytes": 351
+  },
+  "icon-heart-pixelated": {
+    "ssim": 0.9241940830563357,
+    "mean_de": 1.174542724515959,
+    "p99_de": 47.56958484649658,
+    "layers": 1,
+    "segments": 4,
+    "bytes": 320
+  },
+  "logo-circles": {
+    "ssim": 0.9998539238312848,
+    "mean_de": 0.009170033771255248,
+    "p99_de": 0.0,
+    "layers": 4,
+    "segments": 24,
+    "bytes": 805
+  },
+  "logo-circles-aliased": {
+    "ssim": 0.9968288014839124,
+    "mean_de": 0.10886558649012557,
+    "p99_de": 4.683542996644974,
+    "layers": 4,
+    "segments": 24,
+    "bytes": 865
+  },
+  "logo-circles-noisy": {
+    "ssim": 0.9978427170317417,
+    "mean_de": 0.23329106124432286,
+    "p99_de": 2.389725483953953,
+    "layers": 4,
+    "segments": 28,
+    "bytes": 993
+  },
+  "logo-circles-pixelated": {
+    "ssim": 0.9919298326835004,
+    "mean_de": 0.17166107657153873,
+    "p99_de": 5.03254346549511,
+    "layers": 4,
+    "segments": 28,
+    "bytes": 991
+  },
+  "logo-circles-soft": {
+    "ssim": 0.9846610663202996,
+    "mean_de": 0.2841066287494698,
+    "p99_de": 8.1256702542305,
+    "layers": 4,
+    "segments": 28,
+    "bytes": 1039
+  },
+  "thin-lines": {
+    "ssim": 0.9839109842402759,
+    "mean_de": 0.46392297230660917,
+    "p99_de": 17.89342164993286,
+    "layers": 2,
+    "segments": 84,
+    "bytes": 2497
+  }
+}
