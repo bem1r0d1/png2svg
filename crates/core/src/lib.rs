@@ -162,9 +162,15 @@ pub fn convert(rgba: &[u8], width: u32, height: u32, opts: &Options) -> Result<O
 
     let pal = quantize::build_palette(&r, &mixed, &prm);
     let mut labels = segment::assign(&r, &mixed, &pal, 0.03 + 2.0 * noise);
+    segment::resolve_blend_layers(&mut labels, &r, &pal);
     let aa_ratio = analyze::edge_aa_ratio(&labels);
     let smoothing = opts.smoothing.map(|s| s.max(0.0)).unwrap_or_else(|| {
-        analyze::edge_smoothing(aa_ratio, noise, analyze::edge_width(&mixed, &labels))
+        analyze::edge_smoothing(
+            aa_ratio,
+            noise,
+            analyze::edge_width(&mixed, &labels),
+            (tw.max(th) as f64 * xf.s) as usize,
+        )
     });
     prm.apply_smoothing(smoothing, unit);
     if noise > 0.01 {

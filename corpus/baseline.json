@@ -135,6 +135,22 @@
     "segments": 28,
     "bytes": 1039
   },
+  "styled-lettering": {
+    "ssim": 0.9953378981350168,
+    "mean_de": 0.24180384987002154,
+    "p99_de": 8.864186704158783,
+    "layers": 5,
+    "segments": 239,
+    "bytes": 7461
+  },
+  "styled-lettering-generated": {
+    "ssim": 0.9857541063347423,
+    "mean_de": 0.5761089596956673,
+    "p99_de": 10.34296527504921,
+    "layers": 5,
+    "segments": 520,
+    "bytes": 15210
+  },
   "thin-lines": {
     "ssim": 0.9839109842402759,
     "mean_de": 0.46392297230660917,

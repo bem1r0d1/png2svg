@@ -145,11 +145,14 @@ fn histogram(r: &Raster, mixed: &[bool]) -> Vec<Entry> {
         let w = if mixed[i] { 0.02 } else { 1.0 };
         *exact.entry(c).or_insert(0.0) += w;
     }
+    // Fixed order: sums and tie-breaks must not depend on HashMap iteration.
+    let mut exact: Vec<([u8; 4], f64)> = exact.into_iter().collect();
+    exact.sort_unstable_by_key(|e| e.0);
     let mut shift = 0u32;
     loop {
         // Bucket colours (no-op for shift 0) and keep the most frequent exact colour per bucket.
         let mut buckets: HashMap<[u8; 4], (f64, [u8; 4], f64)> = HashMap::new();
-        for (&c, &w) in &exact {
+        for &(c, w) in &exact {
             let key = c.map(|v| v >> shift);
             let b = buckets.entry(key).or_insert((0.0, c, -1.0));
             b.0 += w;
@@ -385,8 +388,20 @@ pub(crate) fn build_palette(r: &Raster, mixed: &[bool], p: &Params) -> Palette {
             } else {
                 kmeans(&entries, p.max_colors * 3)
             };
-            let md = p.merge_dist;
             let min_w = (p.speckle_area as f64).max(1.0);
+            // Vector renders have exact flat colours; painted / generated /
+            // photographed artwork has shades that drift. There, close shades
+            // of one colour are merged more boldly.
+            let (mw, tw) = cl
+                .iter()
+                .filter(|c| c.w >= min_w)
+                .fold((0.0, 0.0), |(m, t), c| (m + c.mode_w, t + c.w));
+            let exact = if tw > 0.0 { mw / tw } else { 1.0 };
+            let md = if exact < 0.3 {
+                p.merge_dist * 1.8
+            } else {
+                p.merge_dist
+            };
             // Merge imperceptible differences always. Up to `3·md`, merge only
             // clusters that overlap (distance small vs. their spread — noise,
             // JPEG artefacts) or weak satellites of a dominant colour. Two
@@ -402,6 +417,12 @@ pub(crate) fn build_palette(r: &Raster, mixed: &[bool], p: &Params) -> Palette {
             // Drop colours that only exist as tiny specks or as edge blends.
             if cl.iter().any(|c| c.w >= min_w) {
                 cl.retain(|c| c.w >= min_w);
+            }
+            // Small clusters with hardly any pixels of their own colour are
+            // made of edge transitions, not a real colour of the artwork.
+            let total: f64 = cl.iter().map(|c| c.w).sum();
+            if cl.len() > 1 {
+                cl.retain(|c| !(c.w < total * 0.001 && c.mode_w < c.w * 0.1));
             }
             prune_blends(&mut cl, r.rgba.iter().any(|c| c[3] == 0));
             agglomerate(&mut cl, p.max_colors, |_, _, _| false);

@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="600" height="220" viewBox="0 0 600 220">
+  <defs>
+    <path id="w" d="M40 170 C90 60 170 30 250 40 C200 60 160 110 175 150 C210 90 260 70 300 75 C270 110 260 140 280 165 C330 100 400 70 470 60 C430 90 410 130 430 160 C480 120 520 115 570 120 C520 140 480 175 420 190 C330 200 200 200 40 170 Z"/>
+    <clipPath id="top"><rect width="600" height="118"/></clipPath>
+    <clipPath id="bottom"><rect y="118" width="600" height="102"/></clipPath>
+  </defs>
+  <rect width="600" height="220" fill="#ffffff"/>
+  <use href="#w" fill="none" stroke="#ffd600" stroke-width="18" stroke-linejoin="round"/>
+  <use href="#w" fill="none" stroke="#4e1a63" stroke-width="7" stroke-linejoin="round"/>
+  <use href="#w" fill="#ff3d8b" clip-path="url(#top)"/>
+  <use href="#w" fill="#82eaf8" clip-path="url(#bottom)"/>
+</svg>

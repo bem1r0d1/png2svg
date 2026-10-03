@@ -287,7 +287,7 @@ pub(crate) fn edge_aa_ratio(l: &Labels) -> f32 {
 }
 
 /// Gaussian blur σ (px) for the coverage fields, from the input analysis.
-pub(crate) fn edge_smoothing(aa_ratio: f32, noise: f32, edge_width: f32) -> f32 {
+pub(crate) fn edge_smoothing(aa_ratio: f32, noise: f32, edge_width: f32, size: usize) -> f32 {
     // Blurry edges: the sub-pixel position is less certain, smooth accordingly.
     // (JPEG artefacts also widen edges; noise is handled by its own term.)
     let mut s = if noise < 0.006 {
@@ -297,6 +297,12 @@ pub(crate) fn edge_smoothing(aa_ratio: f32, noise: f32, edge_width: f32) -> f32 
     };
     if aa_ratio < 0.25 {
         s = s.max(0.8); // aliased: 1 px staircases
+    }
+    // Large images: wobble of a few pixels is drawing / compression texture,
+    // not detail; smoothing proportional to the size removes it invisibly.
+    // (Clean vector renders are exact at any size and are left alone.)
+    if noise > 0.003 {
+        s = s.max(((size as f32 - 600.0) * 0.0015).clamp(0.0, 2.5));
     }
     s.max(((noise - 0.006) * 60.0).clamp(0.0, 1.5))
 }
