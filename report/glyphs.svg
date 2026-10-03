@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="96" viewBox="0 0 240 96" fill="none">
+<rect id="color-fdfdfd" x="0" y="0" width="240" height="96" fill="#fdfdfd"/>
+<g id="color-0b0b0b">
+<path id="color-0b0b0b-1" fill="#0b0b0b" fill-rule="evenodd" d="M148 48c0 20.97-13.43 37.98-30 37.98c-16.57 0-30-17.01-30-37.98c0-20.98 13.43-37.98 30-37.98c16.57 0 30 17 30 37.98zM135.99 48c0-14.36-8.06-25.99-18-25.99c-9.94 0-17.99 11.63-17.99 25.99c0 14.35 8.05 25.98 17.99 25.98c9.94 0 18-11.63 18-25.98z"/>
+<path id="color-0b0b0b-2" fill="#0b0b0b" fill-rule="evenodd" d="M49.95 12l24 72h-13.01l-5.99-18h-22.01l-5.99 18h-13l23.99-72zM36.96 54h14.06l-6.52-20.32c-.22 .25-.71-.17-1 0c-.29 .17-5.79 18.29-6.54 20.32z"/>
+<path id="color-0b0b0b-3" fill="#0b0b0b" fill-rule="evenodd" d="M170 12h56v12h-42v18h36v12h-36v30h-14z"/>
+</g>
+</svg>
