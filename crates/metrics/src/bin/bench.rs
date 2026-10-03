@@ -51,6 +51,7 @@ fn main() -> Result<()> {
     let mut files: Vec<PathBuf> = fs::read_dir(&corpus)?
         .filter_map(|e| e.ok().map(|e| e.path()))
         .filter(|p| p.extension().is_some_and(|e| e == "png"))
+        .filter(|p| !p.to_string_lossy().ends_with(".ref.png"))
         .collect();
     files.sort();
 
@@ -73,7 +74,14 @@ fn main() -> Result<()> {
         let out = convert(&img.data, img.w, img.h, &Options::default())?;
         let ms = t0.elapsed().as_secs_f64() * 1000.0;
         let back = render_svg(&out.svg, img.w, img.h)?;
-        let q = compare(&img, &back);
+        // Degraded inputs are scored against their clean reference.
+        let ref_path = f.with_extension("ref.png");
+        let reference = if ref_path.exists() {
+            load_image(&ref_path)?
+        } else {
+            img.clone()
+        };
+        let q = compare(&reference, &back);
         let row = Row {
             ssim: q.ssim,
             mean_de: q.mean_de,
@@ -104,6 +112,10 @@ fn main() -> Result<()> {
             row.ssim, row.mean_de, row.p99_de, row.layers, row.segments, row.bytes, out.stats.preset
         ));
 
+        // Inputs without a meaningful reference are only shown in the report.
+        if f.with_extension("noref").exists() {
+            continue;
+        }
         if let Some(b) = base.get(&name) {
             let mut why = Vec::new();
             if row.ssim < b.ssim - SSIM_DROP {

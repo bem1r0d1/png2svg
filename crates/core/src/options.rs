@@ -78,6 +78,15 @@ pub struct Options {
     /// ΔE (OKLab × 100) for palette snapping; a large value forces every
     /// colour onto the palette.
     pub palette_tolerance: f32,
+    /// Remove noise / JPEG artefacts with an edge-preserving filter when detected.
+    pub denoise: bool,
+    /// Edge smoothing (Gaussian σ in px) applied before contour extraction.
+    /// `None` = automatic from the detected pixelation, aliasing and noise;
+    /// `Some(0.0)` traces edges exactly as they are.
+    pub smoothing: Option<f32>,
+    /// Detect nearest-neighbour upscaled (pixelated) input and rebuild smooth
+    /// shapes from its logical pixels.
+    pub depixelate: bool,
 }
 
 impl Default for Options {
@@ -97,6 +106,9 @@ impl Default for Options {
             group_by: GroupBy::Shape,
             palette: Vec::new(),
             palette_tolerance: 3.0,
+            denoise: true,
+            smoothing: None,
+            depixelate: true,
         }
     }
 }
@@ -116,6 +128,8 @@ pub(crate) struct Params {
     pub corner_angle: f64,
     /// Arc length (px) used to measure turning angles.
     pub corner_scale: f64,
+    /// Max distance (px) a corner may move to the intersection of its sides.
+    pub corner_reach: f64,
     pub snap_axes: bool,
     pub precision: u8,
     /// Max deviation (px) for replacing a contour by an exact primitive; 0 = off.
@@ -123,6 +137,41 @@ pub(crate) struct Params {
     pub palette: Vec<[u8; 3]>,
     /// OKLab distance (0..1 scale) for palette snapping.
     pub palette_tolerance: f32,
+    /// Snap colours this close to pure white / black (0 = off).
+    pub pure_snap: f32,
+}
+
+impl Params {
+    /// Noisy input: noise blobs must not survive as regions (noise colours
+    /// merge through the spread-based palette rule).
+    pub fn apply_noise(&mut self, noise: f32) {
+        if noise > 0.01 {
+            self.speckle_area += (noise * 800.0) as usize;
+            // Noise shifts the averages: near-white / near-black become pure.
+            self.pure_snap = 0.02;
+        }
+    }
+
+    /// Loosens fitting for smoothed (pixelated / aliased / noisy) input so the
+    /// remaining wobble is absorbed into clean curves instead of being traced.
+    pub fn apply_smoothing(&mut self, sigma: f32, block: usize) {
+        let s = sigma as f64;
+        self.fit_tolerance += 0.3 * s;
+        self.line_tolerance += 0.35 * s;
+        self.corner_scale += s;
+        // Smoothing rounds corners slightly; detect them a little more eagerly
+        // (regularisation then rebuilds the sharp vertex).
+        self.corner_angle -= (10.0 * s.min(1.0)).to_radians();
+        self.corner_reach = 2.5 + 2.0 * s;
+        if self.shape_tolerance > 0.0 {
+            self.shape_tolerance += 0.35 * s;
+        }
+        // A single source pixel of a pixelated image is a legitimate detail.
+        self.speckle_area = self
+            .speckle_area
+            .max(block * block - 1)
+            .max((s * s * 4.0) as usize);
+    }
 }
 
 /// Parses `#rgb` / `#rrggbb` (with or without `#`).
@@ -159,11 +208,13 @@ impl Params {
             line_tolerance: 0.12 + 0.35 * smooth,
             corner_angle: (o.corner_threshold as f64 + corner_bias).to_radians(),
             corner_scale: 1.5 + 1.5 * smooth,
+            corner_reach: 2.5,
             snap_axes: o.snap_axes,
             precision: o.precision.min(4),
             shape_tolerance: if o.shapes { 0.3 + 0.35 * smooth } else { 0.0 },
             palette: o.palette.iter().filter_map(|s| parse_hex(s)).collect(),
             palette_tolerance: o.palette_tolerance.max(0.0) / 100.0,
+            pure_snap: 0.0,
         }
     }
 }

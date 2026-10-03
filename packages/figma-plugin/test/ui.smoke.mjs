@@ -43,6 +43,16 @@ assert.match(await ui.locator('#stats').textContent(), /фигур/);
 assert.equal(await ui.locator('#palette .chip').count(), 4);
 await page.screenshot({ path: resolve(out, 'ui-split.png') });
 
+// A pixelated input is detected and cleaned up.
+const pixelated = readFileSync(resolve(here, '../../../corpus/png/logo-circles-pixelated.png'));
+await page.evaluate((bytes) => send({ type: 'image', id: '1:3', name: 'Pixelated', bytes: new Uint8Array(bytes), nodeWidth: 128, nodeHeight: 128 }), [...pixelated]);
+await ui.locator('#detected').filter({ hasText: 'пикселизация ×4' }).waitFor({ timeout: 15000 });
+assert.ok((await ui.locator('#img-vector svg circle').count()) >= 1, 'pixelated circle → native circle');
+await page.screenshot({ path: resolve(out, 'ui-pixelated.png') });
+await page.evaluate((bytes) => send({ type: 'image', id: '1:2', name: 'Logo', bytes: new Uint8Array(bytes), nodeWidth: 128, nodeHeight: 128 }), [...png]);
+await ui.locator('#detected').filter({ hasNotText: 'пикселизация' }).waitFor({ timeout: 15000 });
+await ui.locator('#img-vector svg circle').first().waitFor({ timeout: 15000 });
+
 // Changing a control re-runs the conversion.
 const before = await ui.locator('#stats').textContent();
 await ui.locator('#smoothness').fill('1');

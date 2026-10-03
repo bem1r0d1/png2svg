@@ -99,6 +99,12 @@ fn main() -> Result<()> {
         println!("{}  {}x{}", p.display(), img.w, img.h);
         Ok(())
     };
+    // Degraded inputs are scored against the clean render (`<name>.ref.png`):
+    // the converter should remove the defect, not reproduce it.
+    let degraded = |name: &str, img: &Rgba, reference: &Rgba| -> Result<()> {
+        write(name, img)?;
+        write(&format!("{name}.ref"), reference)
+    };
 
     for path in &names {
         let stem = path.file_stem().unwrap().to_string_lossy().to_string();
@@ -109,18 +115,99 @@ fn main() -> Result<()> {
         if stem.starts_with("icon-") {
             write(&format!("{stem}-24px"), &render_svg(&svg, 24, 24)?)?;
         }
-        if stem == "flat-illustration" {
-            write(&format!("{stem}-jpeg"), &jpeg_roundtrip(&img, 55)?)?;
-        }
-        if stem == "logo-circles" {
-            // Soft edges: rendered small, then upscaled 4× with bilinear filtering.
-            let small = to_image(&render_svg(&svg, w / 4, h / 4)?);
-            let up = imageops::resize(&small, w, h, imageops::FilterType::Triangle);
-            write(&format!("{stem}-soft"), &from_image(&up))?;
+        match stem.as_str() {
+            "flat-illustration" => {
+                degraded(&format!("{stem}-jpeg"), &jpeg_roundtrip(&img, 55)?, &img)?
+            }
+            "badge" => {
+                // JPEG has no alpha: the badge is exported on white.
+                let white = over_white(&img);
+                degraded(
+                    &format!("{stem}-jpeg"),
+                    &jpeg_roundtrip(&white, 35)?,
+                    &white,
+                )?
+            }
+            "logo-circles" => {
+                // Soft edges: rendered small, then upscaled 4× with bilinear filtering.
+                let small = to_image(&render_svg(&svg, w / 4, h / 4)?);
+                let soft = imageops::resize(&small, w, h, imageops::FilterType::Triangle);
+                degraded(&format!("{stem}-soft"), &from_image(&soft), &img)?;
+                // Pixelated: rendered small, upscaled 4× with nearest neighbour.
+                let px = imageops::resize(&small, w, h, imageops::FilterType::Nearest);
+                degraded(&format!("{stem}-pixelated"), &from_image(&px), &img)?;
+                // Aliased: no anti-aliasing at all (hard staircase edges).
+                degraded(
+                    &format!("{stem}-aliased"),
+                    &render_svg(&crisp(&svg), w, h)?,
+                    &img,
+                )?;
+                // Sensor-like noise + JPEG.
+                degraded(
+                    &format!("{stem}-noisy"),
+                    &jpeg_roundtrip(&add_noise(&img, 12.0), 70)?,
+                    &img,
+                )?;
+            }
+            "icon-heart" => {
+                let small = to_image(&render_svg(&svg, 16, 16)?);
+                let px = imageops::resize(&small, 128, 128, imageops::FilterType::Nearest);
+                degraded(
+                    &format!("{stem}-pixelated"),
+                    &from_image(&px),
+                    &render_svg(&svg, 128, 128)?,
+                )?;
+            }
+            "glyphs" => degraded(
+                &format!("{stem}-aliased"),
+                &render_svg(&crisp(&svg), w, h)?,
+                &img,
+            )?,
+            _ => {}
         }
     }
+    // Pixel art has no "correct" smooth version: visual check only.
     write("pixel-sprite", &from_image(&sprite(8)))?;
+    fs::write(out.join("pixel-sprite.noref"), "")?;
     Ok(())
+}
+
+fn over_white(img: &Rgba) -> Rgba {
+    let mut out = img.clone();
+    for px in out.data.chunks_exact_mut(4) {
+        let a = px[3] as u32;
+        for c in &mut px[..3] {
+            *c = ((*c as u32 * a + 255 * (255 - a)) / 255) as u8;
+        }
+        px[3] = 255;
+    }
+    out
+}
+
+/// Disables anti-aliasing for the whole document.
+fn crisp(svg: &str) -> String {
+    svg.replacen("<svg ", r#"<svg shape-rendering="crispEdges" "#, 1)
+}
+
+/// Deterministic Gaussian-ish noise (sum of uniforms) with the given σ.
+fn add_noise(img: &Rgba, sigma: f64) -> Rgba {
+    let mut state = 0x2545_f491_4f6c_dd1du64;
+    let mut uni = || {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        (state >> 11) as f64 / (1u64 << 53) as f64
+    };
+    let mut out = img.clone();
+    for px in out.data.chunks_exact_mut(4) {
+        for c in &mut px[..3] {
+            let n: f64 = (0..4).map(|_| uni()).sum::<f64>() - 2.0; // var = 1/3
+            *c = (*c as f64 + n * sigma * 3f64.sqrt())
+                .round()
+                .clamp(0.0, 255.0) as u8;
+        }
+    }
+    out
 }
 
 fn jpeg_roundtrip(img: &Rgba, quality: u8) -> Result<Rgba> {

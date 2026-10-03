@@ -18,6 +18,12 @@ export interface ConvertOptions {
   /** Target colours (#rrggbb) that close colours snap to, e.g. document styles. */
   palette: string[];
   paletteTolerance: number;
+  /** Edge smoothing σ in px (null = automatic). */
+  smoothing: number | null;
+  /** Remove noise / JPEG artefacts. */
+  denoise: boolean;
+  /** Rebuild smooth shapes from pixelated (nearest-upscaled) input. */
+  depixelate: boolean;
 }
 
 export const DEFAULT_OPTIONS: ConvertOptions = {
@@ -32,6 +38,9 @@ export const DEFAULT_OPTIONS: ConvertOptions = {
   speckleArea: null,
   palette: [],
   paletteTolerance: 3,
+  smoothing: null,
+  denoise: true,
+  depixelate: true,
 };
 
 export interface LayerInfo {
@@ -57,6 +66,9 @@ export interface ConvertOutput {
     segments: number;
     primitives: number;
     bytes: number;
+    noise: number;
+    pixelGrid: number;
+    smoothing: number;
   };
 }
 

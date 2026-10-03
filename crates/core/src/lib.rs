@@ -4,6 +4,7 @@
 //! labelling → speckle removal → stacked layers → sub-pixel iso-contours →
 //! corner-aware Bézier fitting → compact SVG.
 
+mod analyze;
 pub mod color;
 mod contour;
 mod fit;
@@ -49,6 +50,12 @@ pub struct Stats {
     /// Native circles / ellipses / rectangles in the output.
     pub primitives: usize,
     pub bytes: usize,
+    /// Estimated input noise (0 = clean).
+    pub noise: f32,
+    /// Detected pixel grid of a pixelated input (1 = none).
+    pub pixel_grid: usize,
+    /// Edge smoothing σ (px) that was applied.
+    pub smoothing: f32,
 }
 
 #[derive(Clone, Debug)]
@@ -94,22 +101,86 @@ pub fn convert(rgba: &[u8], width: u32, height: u32, opts: &Options) -> Result<O
         });
     }
     let (w, h) = (width as usize, height as usize);
-    let r = raster::Raster::new(rgba, w, h);
+    let src = raster::Raster::new(rgba, w, h);
+
+    // Pixelated input (nearest-neighbour upscale): trace the logical image,
+    // one pixel per block, and scale the result back. Genuine pixel art (hard
+    // edges) is first enlarged 4× with Scale2x so diagonals become smooth.
+    let grid = if opts.depixelate {
+        analyze::pixel_grid(&src)
+    } else {
+        None
+    };
+    let (mut r, xf, unit) = match grid {
+        Some(g) => {
+            let (px, lw, lh, x0, y0) = analyze::downsample(&src, g);
+            let logical = raster::Raster::new(&px, lw, lh);
+            if analyze::is_hard_edged(&logical) {
+                let x2 = analyze::scale2x(&px, lw, lh);
+                let x4 = analyze::scale2x(&x2, lw * 2, lh * 2);
+                let xf = Xf {
+                    s: g.k as f64 / 4.0,
+                    ox: x0,
+                    oy: y0,
+                };
+                (raster::Raster::new(&x4, lw * 4, lh * 4), xf, 4)
+            } else {
+                (
+                    logical,
+                    Xf {
+                        s: g.k as f64,
+                        ox: x0,
+                        oy: y0,
+                    },
+                    1,
+                )
+            }
+        }
+        None => (src, Xf::IDENTITY, 1),
+    };
+    let block = grid.map_or(1, |g| g.k);
+    let (tw, th) = (r.w as u32, r.h as u32);
+
+    // Noise / JPEG artefacts are filtered out before anything is traced.
+    // Pixelated sources are exact by construction, and on tiny images
+    // anti-aliasing is indistinguishable from noise: skip those.
+    let noise = if grid.is_none() && r.w.min(r.h) >= 48 {
+        analyze::estimate_noise(&r)
+    } else {
+        0.0
+    };
+    if opts.denoise && noise > 0.01 {
+        analyze::denoise(&mut r, noise, if noise > 0.02 { 2 } else { 1 });
+    }
     let mixed = r.detect_mixed();
     let preset = match opts.preset {
         Preset::Auto => classify(&r, &mixed),
         p => p,
     };
-    let prm = options::Params::resolve(opts, preset, width, height);
+    let mut prm = options::Params::resolve(opts, preset, tw, th);
+    prm.apply_noise(noise);
 
     let pal = quantize::build_palette(&r, &mixed, &prm);
-    let mut labels = segment::assign(&r, &mixed, &pal);
+    let mut labels = segment::assign(&r, &mixed, &pal, 0.03 + 2.0 * noise);
+    let aa_ratio = analyze::edge_aa_ratio(&labels);
+    let smoothing = opts.smoothing.map(|s| s.max(0.0)).unwrap_or_else(|| {
+        analyze::edge_smoothing(aa_ratio, noise, analyze::edge_width(&mixed, &labels))
+    });
+    prm.apply_smoothing(smoothing, unit);
+    if noise > 0.01 {
+        segment::absorb_ringing(&mut labels, &pal, 0.08);
+    }
     segment::remove_speckles(&mut labels, prm.speckle_area);
-    let layers = layers::build_layers(&labels, &pal);
+    let layers = layers::build_layers(&labels, &pal, smoothing);
 
     let fitted: Vec<Vec<Fitted>> = layers
         .iter()
-        .map(|l| l.loops.iter().map(|lp| fit_contour(lp, &prm)).collect())
+        .map(|l| {
+            l.loops
+                .iter()
+                .map(|lp| xf.apply(fit_contour(lp, &prm)))
+                .collect()
+        })
         .collect();
 
     let mut used_ids: HashMap<String, usize> = HashMap::new();
@@ -117,7 +188,7 @@ pub fn convert(rgba: &[u8], width: u32, height: u32, opts: &Options) -> Result<O
     let mut svg_layers = Vec::with_capacity(layers.len());
     let mut primitives = 0;
     for (layer, loops) in layers.iter().zip(&fitted) {
-        let rgba = pal.colors[layer.label as usize].rgba;
+        let rgba = pal.colors[layer.label as usize].out;
         let hx = svg::hex(rgba);
         let base = format!("color-{}", &hx[1..]);
         let k = used_ids.entry(base.clone()).or_insert(0);
@@ -145,6 +216,9 @@ pub fn convert(rgba: &[u8], width: u32, height: u32, opts: &Options) -> Result<O
         segments: infos.iter().map(|l| l.segments).sum(),
         primitives,
         bytes: svg.len(),
+        noise,
+        pixel_grid: block,
+        smoothing,
     };
     Ok(Output {
         svg,
@@ -153,6 +227,61 @@ pub fn convert(rgba: &[u8], width: u32, height: u32, opts: &Options) -> Result<O
         layers: infos,
         stats,
     })
+}
+
+/// Maps traced coordinates back to source pixels (depixelisation path).
+#[derive(Clone, Copy)]
+struct Xf {
+    s: f64,
+    ox: f64,
+    oy: f64,
+}
+
+impl Xf {
+    const IDENTITY: Xf = Xf {
+        s: 1.0,
+        ox: 0.0,
+        oy: 0.0,
+    };
+
+    fn p(&self, p: geom::P) -> geom::P {
+        geom::P::new(self.ox + p.x * self.s, self.oy + p.y * self.s)
+    }
+
+    fn apply(&self, mut f: Fitted) -> Fitted {
+        if self.s == 1.0 && self.ox == 0.0 && self.oy == 0.0 {
+            return f;
+        }
+        f.path.start = self.p(f.path.start);
+        for seg in &mut f.path.segs {
+            *seg = match *seg {
+                fit::Seg::Line(p) => fit::Seg::Line(self.p(p)),
+                fit::Seg::Cubic(a, b, p) => fit::Seg::Cubic(self.p(a), self.p(b), self.p(p)),
+            };
+        }
+        f.shape = f.shape.map(|s| match s {
+            shapes::Shape::Ellipse { c, rx, ry, angle } => shapes::Shape::Ellipse {
+                c: self.p(c),
+                rx: rx * self.s,
+                ry: ry * self.s,
+                angle,
+            },
+            shapes::Shape::RoundRect {
+                c,
+                hw,
+                hh,
+                r,
+                angle,
+            } => shapes::Shape::RoundRect {
+                c: self.p(c),
+                hw: hw * self.s,
+                hh: hh * self.s,
+                r: r * self.s,
+                angle,
+            },
+        });
+        f
+    }
 }
 
 /// A fitted contour plus the primitive it was recognised as (if any).
@@ -443,8 +572,8 @@ mod accuracy_tests {
         let mixed = r.detect_mixed();
         let prm = options::Params::resolve(&Options::default(), Preset::Logo, 64, 64);
         let pal = quantize::build_palette(&r, &mixed, &prm);
-        let labels = segment::assign(&r, &mixed, &pal);
-        let layers = layers::build_layers(&labels, &pal);
+        let labels = segment::assign(&r, &mixed, &pal, 0.03);
+        let layers = layers::build_layers(&labels, &pal, 0.0);
         let lp = &layers[1].loops[0];
         let mut maxe: f64 = 0.0;
         for p in lp {

@@ -37,7 +37,9 @@ impl Labels {
 
 const PAIR_PENALTY: f32 = 0.004;
 
-pub(crate) fn assign(r: &Raster, mixed: &[bool], pal: &Palette) -> Labels {
+/// `explained`: residual below which a pixel counts as explained (raise it
+/// for noisy input so noise does not trigger wide candidate searches).
+pub(crate) fn assign(r: &Raster, mixed: &[bool], pal: &Palette, explained: f32) -> Labels {
     let n = r.w * r.h;
     let transparent = pal.transparent_index().map(|i| i as u16);
     let mut cache: HashMap<[u8; 4], u16> = HashMap::new();
@@ -64,15 +66,16 @@ pub(crate) fn assign(r: &Raster, mixed: &[bool], pal: &Palette) -> Labels {
             let near = a[i];
             let d0 = sub(p, pms[near as usize]);
             let res0 = dot(d0, d0).sqrt();
-            if !mixed[i] && res0 < 0.03 {
+            if !mixed[i] && res0 < explained {
                 continue;
             }
-            // Candidate labels: non-mixed neighbours, searching a growing window
-            // until colours on both sides of a (possibly wide) ramp are found.
+            // Candidate labels: non-mixed neighbours in a growing window, until
+            // a single colour or a blend of two explains the pixel (wide,
+            // blurry ramps need a larger window to reach both sides).
             cand.clear();
             cand.push(near);
-            let mut flat_found = 0;
-            for rad in [3isize, 5, 8] {
+            let mut best = (res0, near, near, 1.0f32);
+            for rad in [3isize, 5, 8, 12] {
                 for dy in -rad..=rad {
                     for dx in -rad..=rad {
                         let (nx, ny) = (x + dx, y + dy);
@@ -80,40 +83,14 @@ pub(crate) fn assign(r: &Raster, mixed: &[bool], pal: &Palette) -> Labels {
                             continue;
                         }
                         let j = (ny * w + nx) as usize;
-                        if !mixed[j] {
-                            if !cand.contains(&a[j]) {
-                                cand.push(a[j]);
-                            }
-                            if a[j] != near {
-                                flat_found += 1;
-                            }
+                        if !mixed[j] && !cand.contains(&a[j]) {
+                            cand.push(a[j]);
                         }
                     }
                 }
-                if cand.len() >= 3 || (cand.len() >= 2 && flat_found > 0 && rad >= 5) {
+                best = best_blend(p, &cand, &pms, best);
+                if best.0 < explained {
                     break;
-                }
-            }
-            let mut best = (res0, near, near, 1.0f32);
-            for (ci, &la) in cand.iter().enumerate() {
-                let pa = pms[la as usize];
-                let da = sub(p, pa);
-                let r1 = dot(da, da).sqrt();
-                if r1 < best.0 {
-                    best = (r1, la, la, 1.0);
-                }
-                for &lb in &cand[ci + 1..] {
-                    let d = sub(pms[lb as usize], pa);
-                    let dd = dot(d, d);
-                    if dd < 1e-6 {
-                        continue;
-                    }
-                    let s = (dot(da, d) / dd).clamp(0.0, 1.0);
-                    let e = sub(p, add(pa, scale(d, s)));
-                    let r2 = dot(e, e).sqrt() + PAIR_PENALTY;
-                    if r2 < best.0 {
-                        best = (r2, la, lb, 1.0 - s);
-                    }
                 }
             }
             let (_, la, lb, ta) = best;
@@ -138,6 +115,39 @@ pub(crate) fn assign(r: &Raster, mixed: &[bool], pal: &Palette) -> Labels {
         b,
         t,
     }
+}
+
+/// Best single colour or two-colour blend among `cand` explaining `p`:
+/// (residual, majority-or-first label, second label, coverage of the first).
+fn best_blend(
+    p: [f32; 4],
+    cand: &[u16],
+    pms: &[[f32; 4]],
+    init: (f32, u16, u16, f32),
+) -> (f32, u16, u16, f32) {
+    let mut best = init;
+    for (ci, &la) in cand.iter().enumerate() {
+        let pa = pms[la as usize];
+        let da = sub(p, pa);
+        let r1 = dot(da, da).sqrt();
+        if r1 < best.0 {
+            best = (r1, la, la, 1.0);
+        }
+        for &lb in &cand[ci + 1..] {
+            let d = sub(pms[lb as usize], pa);
+            let dd = dot(d, d);
+            if dd < 1e-6 {
+                continue;
+            }
+            let s = (dot(da, d) / dd).clamp(0.0, 1.0);
+            let e = sub(p, add(pa, scale(d, s)));
+            let r2 = dot(e, e).sqrt() + PAIR_PENALTY;
+            if r2 < best.0 {
+                best = (r2, la, lb, 1.0 - s);
+            }
+        }
+    }
+    best
 }
 
 /// Merge connected components (8-connectivity) smaller than `min_area` into
@@ -235,6 +245,80 @@ pub(crate) fn remove_speckles(l: &mut Labels, min_area: usize) {
         }
         if !changed {
             break;
+        }
+    }
+}
+
+/// JPEG / noise clean-up: colours that live only as thin bands along edges
+/// (ringing, chroma bleeding) and are close to a much larger neighbouring
+/// colour are absorbed into it. Genuine colour regions have interiors.
+pub(crate) fn absorb_ringing(l: &mut Labels, pal: &crate::quantize::Palette, max_dist: f32) {
+    let n = l.w * l.h;
+    let nl = pal.colors.len();
+    let mut area = vec![0usize; nl];
+    let mut near_edge = vec![0usize; nl];
+    let mut contact = vec![vec![0usize; nl]; nl];
+    let (w, h) = (l.w as isize, l.h as isize);
+    for y in 0..h {
+        for x in 0..w {
+            let i = (y * w + x) as usize;
+            let a = l.a[i] as usize;
+            area[a] += 1;
+            let mut edge = false;
+            for dy in -2..=2isize {
+                for dx in -2..=2isize {
+                    let (nx, ny) = (x + dx, y + dy);
+                    if nx < 0 || ny < 0 || nx >= w || ny >= h {
+                        continue;
+                    }
+                    let b = l.a[(ny * w + nx) as usize] as usize;
+                    if b != a {
+                        edge = true;
+                        if dx.abs() + dy.abs() == 1 {
+                            contact[a][b] += 1;
+                        }
+                    }
+                }
+            }
+            near_edge[a] += usize::from(edge);
+        }
+    }
+    let mut target: Vec<Option<u16>> = vec![None; nl];
+    for a in 0..nl {
+        if area[a] == 0
+            || pal.colors[a].transparent
+            || (near_edge[a] as f32) < 0.85 * area[a] as f32
+        {
+            continue;
+        }
+        let best = (0..nl)
+            .filter(|&b| {
+                b != a && contact[a][b] > 0 && area[b] > area[a] * 4 && !pal.colors[b].transparent
+            })
+            .map(|b| {
+                (
+                    crate::quantize::fdist2(pal.colors[a].feat, pal.colors[b].feat).sqrt(),
+                    b,
+                )
+            })
+            .filter(|&(d, _)| d < max_dist)
+            .min_by(|x, y| x.0.total_cmp(&y.0));
+        if let Some((_, b)) = best {
+            target[a] = Some(b as u16);
+        }
+    }
+    if target.iter().all(Option::is_none) {
+        return;
+    }
+    for i in 0..n {
+        if let Some(t) = target[l.a[i] as usize] {
+            l.a[i] = t;
+        }
+        if let Some(t) = target[l.b[i] as usize] {
+            l.b[i] = t;
+        }
+        if l.a[i] == l.b[i] {
+            l.t[i] = 1.0;
         }
     }
 }

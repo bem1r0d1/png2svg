@@ -23,6 +23,9 @@ OPTIONS:
         --speckle <px>         minimum region area (default: from detail)
         --no-snap              do not snap near-axis lines to horizontal/vertical
         --precision <0..4>     decimals in path data (default: 2)
+        --smoothing <px>       edge smoothing σ (default: auto from pixelation / aliasing / noise; 0 = off)
+        --no-denoise           do not filter noise / JPEG artefacts
+        --no-depixelate        trace pixelated input as is
         --no-shapes            do not detect circles / ellipses / (rounded) rectangles
         --flatten-shapes       write detected shapes as paths instead of <circle>/<ellipse>/<rect>
         --group-by <mode>      shape (one element per shape, default) | color (one path per colour)
@@ -75,6 +78,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             "--no-snap" => opts.snap_axes = false,
             "--precision" => opts.precision = val(&mut args, &a)?.parse()?,
             "--no-shapes" => opts.shapes = false,
+            "--smoothing" => opts.smoothing = Some(val(&mut args, &a)?.parse()?),
+            "--no-denoise" => opts.denoise = false,
+            "--no-depixelate" => opts.depixelate = false,
             "--flatten-shapes" => opts.flatten_shapes = true,
             "--group-by" => {
                 opts.group_by = match val(&mut args, &a)?.as_str() {
@@ -127,6 +133,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         s.primitives,
         s.bytes,
         ms
+    );
+    eprintln!(
+        "analysis: noise {:.4}, pixel grid {}, edge smoothing σ {:.2} px",
+        s.noise, s.pixel_grid, s.smoothing
     );
     if metrics {
         let back = render_svg(&out.svg, img.w, img.h)?;

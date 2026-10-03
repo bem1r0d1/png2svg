@@ -62,5 +62,8 @@ function toCoreOptions(o: Partial<ConvertOptions>): Record<string, unknown> {
   if (o.speckleArea != null && o.speckleArea > 0) out.speckleArea = Math.round(o.speckleArea);
   if (o.palette?.length) out.palette = o.palette;
   if (o.paletteTolerance != null) out.paletteTolerance = o.paletteTolerance;
+  if (o.smoothing != null) out.smoothing = o.smoothing;
+  if (o.denoise != null) out.denoise = o.denoise;
+  if (o.depixelate != null) out.depixelate = o.depixelate;
   return out;
 }

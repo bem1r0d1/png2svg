@@ -1,20 +1,38 @@
-//! Dev helper: writes `source | rendered SVG | |diff|` side by side, zoomed.
-//! cargo run -p png2svg-metrics --bin sidebyside -- <name> [zoom] [report dir]
+//! Dev helper: `source (nearest zoom) | SVG rendered as vector at zoom | |diff|`.
+//!
+//! cargo run -p png2svg-metrics --bin sidebyside -- <name> [zoom] [x y size] [--dir report]
+//!
+//! With a crop (`x y size`, in source pixels) the panel shows that region only,
+//! which makes it easy to inspect edge quality at high magnification.
 
 use std::path::PathBuf;
 
-use png2svg_metrics::{load_image, save_png, Result, Rgba};
+use png2svg_metrics::{load_image, render_svg, save_png, Result, Rgba};
 
 fn main() -> Result<()> {
-    let mut args = std::env::args().skip(1);
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    let mut dir = PathBuf::from("report");
+    if let Some(i) = args.iter().position(|a| a == "--dir") {
+        dir = PathBuf::from(args.remove(i + 1));
+        args.remove(i);
+    }
     let name = args
-        .next()
-        .ok_or("usage: sidebyside <name> [zoom] [report dir]")?;
-    let zoom: u32 = args.next().map(|z| z.parse()).transpose()?.unwrap_or(2);
-    let dir = PathBuf::from(args.next().unwrap_or_else(|| "report".into()));
-    let a = load_image(&dir.join(format!("{name}.png")))?;
-    let b = load_image(&dir.join(format!("{name}.render.png")))?;
-    let (w, h) = (a.w * zoom, a.h * zoom);
+        .first()
+        .ok_or("usage: sidebyside <name> [zoom] [x y size] [--dir report]")?;
+    let zoom: u32 = args.get(1).map(|z| z.parse()).transpose()?.unwrap_or(2);
+    let src = load_image(&dir.join(format!("{name}.png")))?;
+    let (cx, cy, cw, ch) = match (args.get(2), args.get(3), args.get(4)) {
+        (Some(x), Some(y), Some(s)) => {
+            let s: u32 = s.parse()?;
+            (x.parse()?, y.parse()?, s.min(src.w), s.min(src.h))
+        }
+        _ => (0, 0, src.w, src.h),
+    };
+    let svg = std::fs::read_to_string(dir.join(format!("{name}.svg")))?;
+    // True vector render at the zoomed resolution.
+    let vec = render_svg(&svg, src.w * zoom, src.h * zoom)?;
+
+    let (w, h) = (cw * zoom, ch * zoom);
     let mut out = Rgba {
         w: w * 3 + 8,
         h,
@@ -27,14 +45,13 @@ fn main() -> Result<()> {
     };
     for y in 0..h {
         for x in 0..w {
-            let (sx, sy) = (x / zoom, y / zoom);
-            let pa = over_white(&a, sx, sy);
-            let pb = over_white(&b, sx, sy);
+            let pa = over_white(&src, cx + x / zoom, cy + y / zoom);
+            let pb = over_white(&vec, cx * zoom + x, cy * zoom + y);
             let d = (0..3)
                 .map(|c| (pa[c] as i32 - pb[c] as i32).unsigned_abs())
                 .max()
                 .unwrap();
-            let pd = [255u8, (255 - d.min(255) as u8), (255 - d.min(255) as u8)];
+            let pd = [255u8, 255 - d.min(255) as u8, 255 - d.min(255) as u8];
             for (k, p) in [pa, pb, pd].iter().enumerate() {
                 let ox = x + k as u32 * (w + 4);
                 let i = ((y * out.w + ox) * 4) as usize;

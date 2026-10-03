@@ -221,7 +221,7 @@ pub(crate) fn fit_loop(raw: &[P], prm: &Params) -> FittedLoop {
                 if let Some(ip) = intersect_lines(c1, d1, c2, d2) {
                     // Never extrapolate far beyond short sides (tiny teeth become spikes).
                     let side = |k: usize| segs_pts[k][0].dist(*segs_pts[k].last().unwrap());
-                    let limit = (0.15 * side(prev).min(side(ci))).min(2.5);
+                    let limit = (0.15 * side(prev).min(side(ci))).min(prm.corner_reach);
                     if ip.dist(cpos[ci]) < limit {
                         cpos[ci] = ip;
                     }

@@ -5,6 +5,7 @@
 //! paint over those parts, so adjacent shapes overlap instead of abutting and
 //! no hairline seams can appear at any zoom level.
 
+use crate::analyze::gaussian_blur;
 use crate::contour::iso_contours;
 use crate::geom::{polygon_area, P};
 use crate::quantize::Palette;
@@ -19,7 +20,7 @@ pub(crate) struct Layer {
     pub loops: Vec<Vec<P>>,
 }
 
-pub(crate) fn build_layers(l: &Labels, pal: &Palette) -> Vec<Layer> {
+pub(crate) fn build_layers(l: &Labels, pal: &Palette, smoothing: f32) -> Vec<Layer> {
     let n = l.w * l.h;
     let transparent = pal.transparent_index().map(|i| i as u16);
     let mut area = vec![0usize; pal.colors.len()];
@@ -36,7 +37,8 @@ pub(crate) fn build_layers(l: &Labels, pal: &Palette) -> Vec<Layer> {
     }
 
     let mut layers = Vec::with_capacity(order.len());
-    let offsets = disc_offsets(UNDERLAP);
+    // The underlap must survive the edge smoothing.
+    let offsets = disc_offsets(UNDERLAP + smoothing);
     let mut field = vec![0f32; n];
     let mut own = vec![0f32; n];
     let mut hole = vec![false; n];
@@ -62,6 +64,7 @@ pub(crate) fn build_layers(l: &Labels, pal: &Palette) -> Vec<Layer> {
             };
             field[i] = (own[i] + later * reach).min(1.0);
         }
+        gaussian_blur(&mut field, l.w, l.h, smoothing);
         preserve_thin_lines(&mut field, l.w, l.h);
         let mut loops = iso_contours(&field, l.w, l.h);
         loops.retain(|lp| polygon_area(lp).abs() >= 0.3);

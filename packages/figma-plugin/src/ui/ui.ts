@@ -40,6 +40,11 @@ const els = {
   shapes: $<HTMLInputElement>('shapes'),
   separate: $<HTMLInputElement>('separate'),
   speckle: $<HTMLInputElement>('speckle'),
+  smoothing: $<HTMLInputElement>('smoothing'),
+  smoothingValue: $('smoothing-value'),
+  denoise: $<HTMLInputElement>('denoise'),
+  depixelate: $<HTMLInputElement>('depixelate'),
+  detected: $('detected'),
   speckleValue: $('speckle-value'),
   match: $<HTMLInputElement>('match'),
   beside: $<HTMLButtonElement>('insert-beside'),
@@ -213,6 +218,7 @@ function clearSource(reason: string) {
   els.sourceName.textContent = 'Нет изображения';
   els.sourceSize.textContent = '';
   els.stats.textContent = '';
+  els.detected.textContent = '';
   els.palette.innerHTML = '';
   setActionsEnabled(false);
 }
@@ -232,6 +238,11 @@ function renderResult(ms: number) {
   const kb = (s.bytes / 1024).toFixed(1);
   const prims = s.primitives ? ` · ${s.primitives} фигур` : '';
   els.stats.textContent = `${s.layers} цв. · ${s.subpaths} контуров · ${s.segments} сегм.${prims} · ${kb} КБ · ${Math.round(ms)} мс · ${presetName(s.preset)}`;
+  const found: string[] = [];
+  if (s.pixelGrid > 1) found.push(`пикселизация ×${s.pixelGrid}`);
+  if (s.noise > 0.01) found.push('шум / JPEG');
+  if (s.smoothing > 0) found.push(`сглаживание ${s.smoothing.toFixed(1)} px`);
+  els.detected.textContent = found.length ? `Исправлено: ${found.join(' · ')}` : '';
   els.palette.innerHTML = '';
   for (const l of result.layers) {
     const chip = document.createElement('span');
@@ -312,6 +323,11 @@ const readControls = () => {
   const speckle = Number(els.speckle.value);
   options.speckleArea = speckle > 0 ? speckle : null;
   els.speckleValue.textContent = speckle > 0 ? `${speckle} px²` : 'авто';
+  const sm = Number(els.smoothing.value);
+  options.smoothing = sm < 0 ? null : sm;
+  els.smoothingValue.textContent = sm < 0 ? 'авто' : `${sm.toFixed(1)} px`;
+  options.denoise = els.denoise.checked;
+  options.depixelate = els.depixelate.checked;
   // Snap extracted colours to the document's styles / variables.
   options.palette = els.match.checked ? docColors : [];
   schedule();
@@ -327,6 +343,9 @@ for (const el of [
   els.separate,
   els.speckle,
   els.match,
+  els.smoothing,
+  els.denoise,
+  els.depixelate,
 ]) {
   el.addEventListener('input', readControls);
 }

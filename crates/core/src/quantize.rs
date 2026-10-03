@@ -14,7 +14,11 @@ use crate::raster::{premultiply, Raster};
 
 #[derive(Clone, Debug)]
 pub(crate) struct PalColor {
+    /// Colour as measured in the image: used for labelling.
     pub rgba: [u8; 4],
+    /// Colour written to the SVG (snapped to the target palette / pure white
+    /// or black). Snapping only the output keeps labelling accurate.
+    pub out: [u8; 4],
     pub feat: [f32; 4],
     pub pm: [f32; 4],
     pub transparent: bool,
@@ -333,6 +337,13 @@ fn snap_to_palette(c: [u8; 4], p: &Params) -> [u8; 4] {
             best = (d, Some(*t));
         }
     }
+    if best.1.is_none() && p.pure_snap > 0.0 {
+        for t in [[255u8, 255, 255], [0, 0, 0]] {
+            if fdist2(f, feature([t[0], t[1], t[2], c[3]])).sqrt() < p.pure_snap {
+                best.1 = Some(t);
+            }
+        }
+    }
     match best.1 {
         Some(t) => [t[0], t[1], t[2], c[3]],
         None => c,
@@ -345,6 +356,7 @@ pub(crate) fn build_palette(r: &Raster, mixed: &[bool], p: &Params) -> Palette {
     if r.rgba.iter().any(|c| c[3] == 0) {
         colors.push(PalColor {
             rgba: [0; 4],
+            out: [0; 4],
             feat: [0.0; 4],
             pm: [0.0; 4],
             transparent: true,
@@ -411,12 +423,20 @@ pub(crate) fn build_palette(r: &Raster, mixed: &[bool], p: &Params) -> Palette {
                 (cent[3] * 255.0).round().clamp(1.0, 255.0) as u8,
             ]
         };
-        let rgba = snap_to_palette(rgba, p);
+        let out = snap_to_palette(rgba, p);
+        // A forced palette (huge tolerance) also drives labelling, so colours
+        // mapped onto the same target collapse into one layer.
+        let rgba = if p.palette_tolerance >= 0.1 {
+            out
+        } else {
+            rgba
+        };
         if colors.iter().any(|c: &PalColor| c.rgba == rgba) {
             continue;
         }
         colors.push(PalColor {
             rgba,
+            out,
             feat: feature(rgba),
             pm: premultiply(rgba),
             transparent: false,
