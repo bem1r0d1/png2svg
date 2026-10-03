@@ -75,7 +75,8 @@ header {
 .controls { padding: 8px 12px; display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--border); margin-top: 8px; }
 .row { display: grid; grid-template-columns: 84px 1fr; align-items: center; gap: 8px; }
 .row > label { color: var(--muted); }
-.row.toggles { display: flex; gap: 16px; padding-top: 2px; }
+.row.toggles { display: flex; flex-wrap: wrap; gap: 6px 14px; padding-top: 2px; }
+.value { min-width: 34px; text-align: right; }
 .inline { display: flex; align-items: center; gap: 6px; }
 input[type=range] { width: 100%; accent-color: var(--brand); }
 input[type=number] {

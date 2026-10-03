@@ -13,11 +13,12 @@ mod options;
 mod quantize;
 mod raster;
 mod segment;
+mod shapes;
 mod svg;
 
 use std::collections::HashMap;
 
-pub use options::{Layering, Options, Preset};
+pub use options::{GroupBy, Layering, Options, Preset};
 
 #[cfg(feature = "serde")]
 use serde::Serialize;
@@ -33,6 +34,8 @@ pub struct LayerInfo {
     pub area: usize,
     pub subpaths: usize,
     pub segments: usize,
+    /// SVG elements (shapes) in this layer.
+    pub elements: usize,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -43,6 +46,8 @@ pub struct Stats {
     pub layers: usize,
     pub subpaths: usize,
     pub segments: usize,
+    /// Native circles / ellipses / rectangles in the output.
+    pub primitives: usize,
     pub bytes: usize,
 }
 
@@ -102,14 +107,15 @@ pub fn convert(rgba: &[u8], width: u32, height: u32, opts: &Options) -> Result<O
     segment::remove_speckles(&mut labels, prm.speckle_area);
     let layers = layers::build_layers(&labels, &pal);
 
-    let fitted: Vec<Vec<fit::FittedLoop>> = layers
+    let fitted: Vec<Vec<Fitted>> = layers
         .iter()
-        .map(|l| l.loops.iter().map(|lp| fit::fit_loop(lp, &prm)).collect())
+        .map(|l| l.loops.iter().map(|lp| fit_contour(lp, &prm)).collect())
         .collect();
 
     let mut used_ids: HashMap<String, usize> = HashMap::new();
     let mut infos = Vec::with_capacity(layers.len());
     let mut svg_layers = Vec::with_capacity(layers.len());
+    let mut primitives = 0;
     for (layer, loops) in layers.iter().zip(&fitted) {
         let rgba = pal.colors[layer.label as usize].rgba;
         let hx = svg::hex(rgba);
@@ -117,15 +123,18 @@ pub fn convert(rgba: &[u8], width: u32, height: u32, opts: &Options) -> Result<O
         let k = used_ids.entry(base.clone()).or_insert(0);
         *k += 1;
         let id = if *k == 1 { base } else { format!("{base}-{k}") };
+        let items = group_items(&layer.loops, loops, opts);
+        primitives += items.iter().filter(|i| i.native.is_some()).count();
         infos.push(LayerInfo {
             id: id.clone(),
             color: rgba,
             hex: hx,
             area: layer.area,
             subpaths: loops.len(),
-            segments: loops.iter().map(|l| l.segs.len()).sum(),
+            segments: loops.iter().map(|l| l.path.segs.len()).sum(),
+            elements: items.len(),
         });
-        svg_layers.push(svg::SvgLayer { id, rgba, loops });
+        svg_layers.push(svg::SvgLayer { id, rgba, items });
     }
     let svg = svg::write_svg(width, height, &svg_layers, prm.precision);
     let stats = Stats {
@@ -134,6 +143,7 @@ pub fn convert(rgba: &[u8], width: u32, height: u32, opts: &Options) -> Result<O
         layers: infos.len(),
         subpaths: infos.iter().map(|l| l.subpaths).sum(),
         segments: infos.iter().map(|l| l.segments).sum(),
+        primitives,
         bytes: svg.len(),
     };
     Ok(Output {
@@ -143,6 +153,126 @@ pub fn convert(rgba: &[u8], width: u32, height: u32, opts: &Options) -> Result<O
         layers: infos,
         stats,
     })
+}
+
+/// A fitted contour plus the primitive it was recognised as (if any).
+struct Fitted {
+    path: fit::FittedLoop,
+    shape: Option<shapes::Shape>,
+}
+
+fn fit_contour(raw: &[geom::P], prm: &options::Params) -> Fitted {
+    if prm.shape_tolerance > 0.0 {
+        if let Some(shape) = shapes::detect(raw, prm.shape_tolerance) {
+            let ccw = geom::polygon_area(raw) > 0.0;
+            return Fitted {
+                path: shapes::to_loop(&shape, ccw),
+                shape: Some(shape),
+            };
+        }
+    }
+    Fitted {
+        path: fit::fit_loop(raw, prm),
+        shape: None,
+    }
+}
+
+fn point_in_polygon(p: geom::P, poly: &[geom::P]) -> bool {
+    let mut inside = false;
+    let n = poly.len();
+    let mut j = n - 1;
+    for i in 0..n {
+        let (a, b) = (poly[i], poly[j]);
+        if (a.y > p.y) != (b.y > p.y) && p.x < (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x {
+            inside = !inside;
+        }
+        j = i;
+    }
+    inside
+}
+
+/// Splits a layer's contours into SVG elements: per shape (outer contour with
+/// its holes) or one path per colour. Hole-free axis-aligned primitives become
+/// native elements unless `flatten_shapes` is set.
+fn group_items<'a>(
+    raw: &[Vec<geom::P>],
+    fitted: &'a [Fitted],
+    opts: &Options,
+) -> Vec<svg::SvgItem<'a>> {
+    let n = raw.len();
+    let bbox: Vec<(f64, f64, f64, f64)> = raw
+        .iter()
+        .map(|l| {
+            l.iter()
+                .fold((f64::MAX, f64::MAX, f64::MIN, f64::MIN), |b, p| {
+                    (b.0.min(p.x), b.1.min(p.y), b.2.max(p.x), b.3.max(p.y))
+                })
+        })
+        .collect();
+    let area: Vec<f64> = raw.iter().map(|l| geom::polygon_area(l).abs()).collect();
+    // containers[i] = loops that contain loop i.
+    let containers: Vec<Vec<usize>> = (0..n)
+        .map(|i| {
+            let p = raw[i][0];
+            (0..n)
+                .filter(|&j| {
+                    j != i
+                        && area[j] > area[i]
+                        && p.x >= bbox[j].0
+                        && p.y >= bbox[j].1
+                        && p.x <= bbox[j].2
+                        && p.y <= bbox[j].3
+                        && point_in_polygon(p, &raw[j])
+                })
+                .collect()
+        })
+        .collect();
+    let native_ok = |i: usize| -> Option<shapes::Shape> {
+        if opts.flatten_shapes {
+            return None;
+        }
+        fitted[i].shape.filter(|s| s.is_axis_aligned())
+    };
+
+    if opts.group_by == options::GroupBy::Color || n <= 1 {
+        let native = if n == 1 { native_ok(0) } else { None };
+        return vec![svg::SvgItem {
+            loops: fitted.iter().map(|f| &f.path).collect(),
+            native,
+        }];
+    }
+    let depth: Vec<usize> = containers.iter().map(Vec::len).collect();
+    let mut items: Vec<(usize, svg::SvgItem)> = Vec::new();
+    let mut index_of = vec![usize::MAX; n];
+    for i in (0..n).filter(|&i| depth[i].is_multiple_of(2)) {
+        index_of[i] = items.len();
+        items.push((
+            i,
+            svg::SvgItem {
+                loops: vec![&fitted[i].path],
+                native: None,
+            },
+        ));
+    }
+    for i in (0..n).filter(|&i| depth[i] % 2 == 1) {
+        // The hole belongs to its innermost container (depth − 1).
+        if let Some(&outer) = containers[i]
+            .iter()
+            .filter(|&&j| depth[j] + 1 == depth[i])
+            .min_by(|&&a, &&b| area[a].total_cmp(&area[b]))
+        {
+            items[index_of[outer]].1.loops.push(&fitted[i].path);
+        }
+    }
+    items
+        .into_iter()
+        .map(|(i, mut item)| {
+            if item.loops.len() == 1 {
+                item.native = native_ok(i);
+            }
+            item
+        })
+        .collect()
 }
 
 /// Cheap image classification for [`Preset::Auto`].
@@ -219,6 +349,80 @@ mod tests {
         let out = convert(&img, 48, 48, &Options::default()).unwrap();
         assert_eq!(out.layers.len(), 1);
         assert_eq!(out.layers[0].color, [10, 10, 10, 255]);
+    }
+
+    /// Two separate red discs on white.
+    fn two_discs() -> Vec<u8> {
+        let a = disc(96, 24.0, 48.0, 14.0, [220, 30, 60], [255, 255, 255, 255]);
+        let b = disc(96, 70.0, 48.0, 14.0, [220, 30, 60], [255, 255, 255, 255]);
+        a.chunks(4)
+            .zip(b.chunks(4))
+            .flat_map(|(p, q)| {
+                if p[1] < q[1] {
+                    [p[0], p[1], p[2], p[3]]
+                } else {
+                    [q[0], q[1], q[2], q[3]]
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn native_shapes_grouped_per_colour() {
+        let out = convert(&two_discs(), 96, 96, &Options::default()).unwrap();
+        assert!(
+            out.svg
+                .contains(r#"<rect id="color-ffffff" x="0" y="0" width="96" height="96""#),
+            "{}",
+            out.svg
+        );
+        assert!(out.svg.contains(r#"<g id="color-dc1e3c">"#), "{}", out.svg);
+        assert_eq!(out.svg.matches("<circle").count(), 2, "{}", out.svg);
+        assert_eq!(out.stats.primitives, 3);
+    }
+
+    #[test]
+    fn group_by_colour_and_flatten() {
+        let opts = Options {
+            group_by: GroupBy::Color,
+            flatten_shapes: true,
+            ..Options::default()
+        };
+        let out = convert(&two_discs(), 96, 96, &opts).unwrap();
+        assert!(
+            !out.svg.contains("<circle") && !out.svg.contains("<g"),
+            "{}",
+            out.svg
+        );
+        assert_eq!(out.svg.matches("<path").count(), 2);
+    }
+
+    #[test]
+    fn palette_snapping() {
+        let img = disc(64, 32.0, 32.0, 20.0, [220, 30, 60], [255, 255, 255, 255]);
+        let opts = Options {
+            palette: vec!["#dd2040".into(), "#fafafa".into()],
+            ..Options::default()
+        };
+        let out = convert(&img, 64, 64, &opts).unwrap();
+        let hex: Vec<&str> = out.layers.iter().map(|l| l.hex.as_str()).collect();
+        assert_eq!(hex, ["#fafafa", "#dd2040"]);
+
+        // Far-away palette colours are ignored unless the tolerance is huge.
+        let opts = Options {
+            palette: vec!["#00ff00".into()],
+            ..Options::default()
+        };
+        let out = convert(&img, 64, 64, &opts).unwrap();
+        assert!(out.layers.iter().all(|l| l.hex != "#00ff00"));
+        let opts = Options {
+            palette: vec!["#000000".into(), "#ffffff".into(), "#ff0000".into()],
+            palette_tolerance: 1000.0,
+            ..Options::default()
+        };
+        let out = convert(&img, 64, 64, &opts).unwrap();
+        let hex: Vec<&str> = out.layers.iter().map(|l| l.hex.as_str()).collect();
+        assert_eq!(hex, ["#ffffff", "#ff0000"]);
     }
 
     #[test]

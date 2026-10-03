@@ -64,9 +64,18 @@
       <label for="corner">Углы</label>
       <input type="range" id="corner" min="20" max="120" step="5" value="60" title="Порог угла: меньше — больше острых углов">
     </div>
+    <div class="row">
+      <label for="speckle">Мин. площадь</label>
+      <div class="inline">
+        <input type="range" id="speckle" min="0" max="100" step="1" value="0" title="Области меньше этой площади (px²) вливаются в соседние; 0 — авто">
+        <span id="speckle-value" class="muted value">авто</span>
+      </div>
+    </div>
     <div class="row toggles">
-      <span><input type="checkbox" id="snap" checked><label for="snap" class="check">Выпрямлять оси</label></span>
-      <span><input type="checkbox" id="match" checked><label for="match" class="check">Привязать к стилям</label></span>
+      <span><input type="checkbox" id="shapes" checked><label for="shapes" class="check" title="Круги, эллипсы и прямоугольники становятся родными фигурами Figma">Фигуры</label></span>
+      <span><input type="checkbox" id="separate" checked><label for="separate" class="check" title="Каждая фигура — отдельный слой (иначе один слой на цвет)">Раздельно</label></span>
+      <span><input type="checkbox" id="snap" checked><label for="snap" class="check">Оси</label></span>
+      <span><input type="checkbox" id="match" checked><label for="match" class="check" title="Подогнать цвета к стилям и переменным документа и привязать их">Стили</label></span>
     </div>
   </section>
 

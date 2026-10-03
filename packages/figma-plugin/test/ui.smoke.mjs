@@ -32,11 +32,14 @@ await page.goto(pathToFileURL(harness).href);
 await page.waitForFunction(() => window.received.some((m) => m.type === 'ready'));
 const ui = page.frameLocator('#ui');
 
-// Figma sends the selected image.
+// Figma sends the document colours, then the selected image.
+await page.evaluate(() => send({ type: 'docColors', colors: ['#e63946', '#1d3557'] }));
 await page.evaluate((bytes) => send({ type: 'image', id: '1:2', name: 'Logo', bytes: new Uint8Array(bytes), nodeWidth: 128, nodeHeight: 128 }), [...png]);
-await ui.locator('#stats').filter({ hasText: 'слоёв' }).waitFor({ timeout: 15000 });
-const paths = await ui.locator('#img-vector svg path').count();
-assert.equal(paths, 4, 'logo-circles → 4 layers');
+await ui.locator('#stats').filter({ hasText: 'контуров' }).waitFor({ timeout: 15000 });
+assert.equal(await ui.locator('#img-vector svg > *').count(), 4, 'logo-circles → 4 colour layers');
+assert.equal(await ui.locator('#img-vector svg rect').count(), 1, 'background → native rectangle');
+assert.equal(await ui.locator('#img-vector svg circle').count(), 1, 'outer ring → native circle');
+assert.match(await ui.locator('#stats').textContent(), /фигур/);
 assert.equal(await ui.locator('#palette .chip').count(), 4);
 await page.screenshot({ path: resolve(out, 'ui-split.png') });
 
@@ -52,7 +55,12 @@ const insert = await page.evaluate(() => window.received.find((m) => m.type === 
 assert.equal(insert.mode, 'replace');
 assert.equal(insert.sourceId, '1:2');
 assert.equal(insert.layers.length, 4);
-assert.match(insert.svg, /<path id="color-/);
+assert.match(insert.svg, /<circle id="color-1b2a4a"/);
+assert.match(insert.svg, /fill="#e63946"/, 'brand colour preserved exactly');
+
+// Turning shapes off yields only paths.
+await ui.locator('#shapes').uncheck();
+await ui.locator('#img-vector svg circle').waitFor({ state: 'detached', timeout: 15000 });
 
 // Sandbox reports success; empty selection clears the preview.
 await page.evaluate(() => send({ type: 'inserted', layers: 4, matched: 2 }));

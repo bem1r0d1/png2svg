@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Instant;
 
-use png2svg_core::{convert, Options, Preset};
+use png2svg_core::{convert, GroupBy, Options, Preset};
 use png2svg_metrics::{compare, load_image, render_svg};
 
 const USAGE: &str = "\
@@ -23,6 +23,11 @@ OPTIONS:
         --speckle <px>         minimum region area (default: from detail)
         --no-snap              do not snap near-axis lines to horizontal/vertical
         --precision <0..4>     decimals in path data (default: 2)
+        --no-shapes            do not detect circles / ellipses / (rounded) rectangles
+        --flatten-shapes       write detected shapes as paths instead of <circle>/<ellipse>/<rect>
+        --group-by <mode>      shape (one element per shape, default) | color (one path per colour)
+        --palette <colors>     comma-separated #rrggbb list; close colours snap to it exactly
+        --palette-tolerance <ΔE>  snapping distance, ΔE OKLab×100 (default: 3; 1000 = force palette)
     -m, --metrics              render the SVG back and print SSIM / ΔE vs. the input
     -h, --help                 show this help
 ";
@@ -69,6 +74,23 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             "--speckle" => opts.speckle_area = Some(val(&mut args, &a)?.parse()?),
             "--no-snap" => opts.snap_axes = false,
             "--precision" => opts.precision = val(&mut args, &a)?.parse()?,
+            "--no-shapes" => opts.shapes = false,
+            "--flatten-shapes" => opts.flatten_shapes = true,
+            "--group-by" => {
+                opts.group_by = match val(&mut args, &a)?.as_str() {
+                    "shape" => GroupBy::Shape,
+                    "color" | "colour" => GroupBy::Color,
+                    g => return Err(format!("unknown group-by '{g}'").into()),
+                }
+            }
+            "--palette" => {
+                opts.palette = val(&mut args, &a)?
+                    .split(',')
+                    .map(|c| c.trim().to_string())
+                    .filter(|c| !c.is_empty())
+                    .collect()
+            }
+            "--palette-tolerance" => opts.palette_tolerance = val(&mut args, &a)?.parse()?,
             "-m" | "--metrics" => metrics = true,
             s if s.starts_with('-') && s != "-" => {
                 return Err(format!("unknown option '{s}'\n\n{USAGE}").into())
@@ -92,7 +114,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     let s = &out.stats;
     eprintln!(
-        "{} → {}: {}x{}, preset {}, {} colours, {} layers, {} subpaths, {} segments, {} bytes, {:.1} ms",
+        "{} → {}: {}x{}, preset {}, {} colours, {} layers, {} subpaths, {} segments, {} shapes, {} bytes, {:.1} ms",
         input.display(),
         output,
         img.w,
@@ -102,6 +124,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         s.layers,
         s.subpaths,
         s.segments,
+        s.primitives,
         s.bytes,
         ms
     );

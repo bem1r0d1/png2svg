@@ -31,6 +31,19 @@ pub enum Layering {
     Stacked,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(Serialize, Deserialize),
+    serde(rename_all = "lowercase")
+)]
+pub enum GroupBy {
+    /// One path per colour (fewest layers).
+    Color,
+    /// One element per shape (outer contour + its holes), grouped by colour.
+    Shape,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(
     feature = "serde",
@@ -54,6 +67,17 @@ pub struct Options {
     pub snap_axes: bool,
     /// Decimal places in path data.
     pub precision: u8,
+    /// Detect circles, ellipses and (rounded) rectangles and fit them exactly.
+    pub shapes: bool,
+    /// Emit detected shapes as paths instead of native `<circle>/<ellipse>/<rect>`.
+    pub flatten_shapes: bool,
+    pub group_by: GroupBy,
+    /// Target colours (`#rrggbb`), e.g. a brand palette or Figma styles.
+    /// Extracted colours within `palette_tolerance` snap to them exactly.
+    pub palette: Vec<String>,
+    /// ΔE (OKLab × 100) for palette snapping; a large value forces every
+    /// colour onto the palette.
+    pub palette_tolerance: f32,
 }
 
 impl Default for Options {
@@ -68,6 +92,11 @@ impl Default for Options {
             layering: Layering::Stacked,
             snap_axes: true,
             precision: 2,
+            shapes: true,
+            flatten_shapes: false,
+            group_by: GroupBy::Shape,
+            palette: Vec::new(),
+            palette_tolerance: 3.0,
         }
     }
 }
@@ -89,6 +118,23 @@ pub(crate) struct Params {
     pub corner_scale: f64,
     pub snap_axes: bool,
     pub precision: u8,
+    /// Max deviation (px) for replacing a contour by an exact primitive; 0 = off.
+    pub shape_tolerance: f64,
+    pub palette: Vec<[u8; 3]>,
+    /// OKLab distance (0..1 scale) for palette snapping.
+    pub palette_tolerance: f32,
+}
+
+/// Parses `#rgb` / `#rrggbb` (with or without `#`).
+pub(crate) fn parse_hex(s: &str) -> Option<[u8; 3]> {
+    let h = s.trim().trim_start_matches('#');
+    let full: String = match h.len() {
+        3 => h.chars().flat_map(|c| [c, c]).collect(),
+        6 => h.to_string(),
+        _ => return None,
+    };
+    let v = u32::from_str_radix(&full, 16).ok()?;
+    Some([(v >> 16) as u8, (v >> 8) as u8, v as u8])
 }
 
 impl Params {
@@ -115,6 +161,9 @@ impl Params {
             corner_scale: 1.5 + 1.5 * smooth,
             snap_axes: o.snap_axes,
             precision: o.precision.min(4),
+            shape_tolerance: if o.shapes { 0.3 + 0.35 * smooth } else { 0.0 },
+            palette: o.palette.iter().filter_map(|s| parse_hex(s)).collect(),
+            palette_tolerance: o.palette_tolerance.max(0.0) / 100.0,
         }
     }
 }

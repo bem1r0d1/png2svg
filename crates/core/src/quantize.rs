@@ -322,6 +322,23 @@ fn blend_residual(p: [f32; 4], a: [f32; 4], b: [f32; 4]) -> f32 {
     dot(r, r).sqrt()
 }
 
+/// Replaces a colour by the nearest user palette colour within tolerance.
+fn snap_to_palette(c: [u8; 4], p: &Params) -> [u8; 4] {
+    let f = feature(c);
+    let mut best = (p.palette_tolerance, None);
+    for t in &p.palette {
+        let ft = feature([t[0], t[1], t[2], c[3]]);
+        let d = fdist2(f, ft).sqrt();
+        if d <= best.0 {
+            best = (d, Some(*t));
+        }
+    }
+    match best.1 {
+        Some(t) => [t[0], t[1], t[2], c[3]],
+        None => c,
+    }
+}
+
 pub(crate) fn build_palette(r: &Raster, mixed: &[bool], p: &Params) -> Palette {
     let entries = histogram(r, mixed);
     let mut colors = Vec::new();
@@ -394,6 +411,10 @@ pub(crate) fn build_palette(r: &Raster, mixed: &[bool], p: &Params) -> Palette {
                 (cent[3] * 255.0).round().clamp(1.0, 255.0) as u8,
             ]
         };
+        let rgba = snap_to_palette(rgba, p);
+        if colors.iter().any(|c: &PalColor| c.rgba == rgba) {
+            continue;
+        }
         colors.push(PalColor {
             rgba,
             feat: feature(rgba),

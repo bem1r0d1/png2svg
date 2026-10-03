@@ -9,6 +9,15 @@ export interface ConvertOptions {
   smoothness: number;
   cornerThreshold: number;
   snapAxes: boolean;
+  /** Detect circles, ellipses and (rounded) rectangles → native Figma shapes. */
+  shapes: boolean;
+  /** 'shape': one layer per shape grouped by colour; 'color': one layer per colour. */
+  groupBy: 'shape' | 'color';
+  /** Minimum region area in px (null = automatic). */
+  speckleArea: number | null;
+  /** Target colours (#rrggbb) that close colours snap to, e.g. document styles. */
+  palette: string[];
+  paletteTolerance: number;
 }
 
 export const DEFAULT_OPTIONS: ConvertOptions = {
@@ -18,6 +27,11 @@ export const DEFAULT_OPTIONS: ConvertOptions = {
   smoothness: 0.5,
   cornerThreshold: 60,
   snapAxes: true,
+  shapes: true,
+  groupBy: 'shape',
+  speckleArea: null,
+  palette: [],
+  paletteTolerance: 3,
 };
 
 export interface LayerInfo {
@@ -27,6 +41,7 @@ export interface LayerInfo {
   area: number;
   subpaths: number;
   segments: number;
+  elements: number;
 }
 
 export interface ConvertOutput {
@@ -40,6 +55,7 @@ export interface ConvertOutput {
     layers: number;
     subpaths: number;
     segments: number;
+    primitives: number;
     bytes: number;
   };
 }
@@ -50,6 +66,7 @@ export type InsertMode = 'beside' | 'replace';
 export type ToUi =
   | { type: 'image'; id: string; name: string; bytes: Uint8Array; nodeWidth: number; nodeHeight: number }
   | { type: 'empty'; reason: string }
+  | { type: 'docColors'; colors: string[] }
   | { type: 'inserted'; layers: number; matched: number }
   | { type: 'error'; message: string };
 
@@ -84,6 +101,11 @@ export function oklab(r: number, g: number, b: number): [number, number, number]
     1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s,
     0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s,
   ];
+}
+
+export function toHex(r: number, g: number, b: number): string {
+  const h = (v: number) => Math.round(Math.max(0, Math.min(1, v)) * 255).toString(16).padStart(2, '0');
+  return `#${h(r)}${h(g)}${h(b)}`;
 }
 
 /** Perceptual distance (ΔE OKLab × 100) between two sRGB colours in 0..1. */

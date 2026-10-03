@@ -37,6 +37,10 @@ const els = {
   smoothness: $<HTMLInputElement>('smoothness'),
   corner: $<HTMLInputElement>('corner'),
   snap: $<HTMLInputElement>('snap'),
+  shapes: $<HTMLInputElement>('shapes'),
+  separate: $<HTMLInputElement>('separate'),
+  speckle: $<HTMLInputElement>('speckle'),
+  speckleValue: $('speckle-value'),
   match: $<HTMLInputElement>('match'),
   beside: $<HTMLButtonElement>('insert-beside'),
   replace: $<HTMLButtonElement>('insert-replace'),
@@ -59,6 +63,7 @@ let source: Source | null = null;
 let result: ConvertOutput | null = null;
 const options: ConvertOptions = { ...DEFAULT_OPTIONS };
 let view: 'original' | 'split' | 'vector' = 'split';
+let docColors: string[] = [];
 let split = 0.5;
 
 // ---------------------------------------------------------------- engine (worker with in-thread fallback)
@@ -225,7 +230,8 @@ function renderResult(ms: number) {
   }
   const s = result.stats;
   const kb = (s.bytes / 1024).toFixed(1);
-  els.stats.textContent = `${s.layers} слоёв · ${s.subpaths} контуров · ${s.segments} сегментов · ${kb} КБ · ${Math.round(ms)} мс · ${presetName(s.preset)}`;
+  const prims = s.primitives ? ` · ${s.primitives} фигур` : '';
+  els.stats.textContent = `${s.layers} цв. · ${s.subpaths} контуров · ${s.segments} сегм.${prims} · ${kb} КБ · ${Math.round(ms)} мс · ${presetName(s.preset)}`;
   els.palette.innerHTML = '';
   for (const l of result.layers) {
     const chip = document.createElement('span');
@@ -301,9 +307,27 @@ const readControls = () => {
   options.smoothness = Number(els.smoothness.value);
   options.cornerThreshold = Number(els.corner.value);
   options.snapAxes = els.snap.checked;
+  options.shapes = els.shapes.checked;
+  options.groupBy = els.separate.checked ? 'shape' : 'color';
+  const speckle = Number(els.speckle.value);
+  options.speckleArea = speckle > 0 ? speckle : null;
+  els.speckleValue.textContent = speckle > 0 ? `${speckle} px²` : 'авто';
+  // Snap extracted colours to the document's styles / variables.
+  options.palette = els.match.checked ? docColors : [];
   schedule();
 };
-for (const el of [els.colorsAuto, els.colors, els.detail, els.smoothness, els.corner, els.snap]) {
+for (const el of [
+  els.colorsAuto,
+  els.colors,
+  els.detail,
+  els.smoothness,
+  els.corner,
+  els.snap,
+  els.shapes,
+  els.separate,
+  els.speckle,
+  els.match,
+]) {
   el.addEventListener('input', readControls);
 }
 
@@ -369,8 +393,15 @@ window.onmessage = (e: MessageEvent) => {
       // Keep a dropped file open when the selection is cleared.
       if (!source || source.id) clearSource(msg.reason);
       break;
+    case 'docColors':
+      docColors = msg.colors;
+      if (els.match.checked) {
+        options.palette = docColors;
+        schedule(0);
+      }
+      break;
     case 'inserted':
-      showMessage(`Готово: ${msg.layers} слоёв` + (msg.matched ? `, стилей: ${msg.matched}` : ''));
+      showMessage(`Готово: ${msg.layers} фигур` + (msg.matched ? `, привязано к стилям: ${msg.matched}` : ''));
       break;
     case 'error':
       showMessage(msg.message, true);

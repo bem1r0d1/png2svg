@@ -1,7 +1,7 @@
 // Plugin sandbox (main thread): talks to the Figma document.
 // Reads the selected image, and inserts the vector result exactly in its place.
 
-import { deltaE, type ToCode, type ToUi } from './shared';
+import { deltaE, toHex, type LayerInfo, type ToCode, type ToUi } from './shared';
 
 /** Longest side (px) sent for conversion; keeps the UI responsive. */
 const MAX_SIDE = 2048;
@@ -58,7 +58,11 @@ figma.on('selectionchange', () => void sendSelection());
 
 figma.ui.onmessage = async (msg: ToCode) => {
   try {
-    if (msg.type === 'ready') await sendSelection();
+    if (msg.type === 'ready') {
+      const colors = await documentColors();
+      post({ type: 'docColors', colors: [...new Set(colors.map((c) => toHex(...c.rgb)))] });
+      await sendSelection();
+    }
     else if (msg.type === 'resize') figma.ui.resize(msg.width, msg.height);
     else if (msg.type === 'insert') await insert(msg);
   } catch (e) {
@@ -72,12 +76,13 @@ async function insert(msg: Extract<ToCode, { type: 'insert' }>) {
   frame.fills = [];
   frame.clipsContent = false;
 
-  // One vector per <path>, bottom → top; name them after the SVG ids.
-  const vectors = frame.children.filter((c) => c.type === 'VECTOR') as VectorNode[];
-  if (vectors.length === msg.layers.length) {
-    vectors.forEach((v, i) => (v.name = msg.layers[i].id));
-  }
-  const matched = msg.matchStyles ? await bindColors(vectors) : 0;
+  nameLayers(frame, msg.layers);
+  const shapes = frame.findAll((n) => n.type === 'VECTOR' || n.type === 'ELLIPSE' || n.type === 'RECTANGLE') as (
+    | VectorNode
+    | EllipseNode
+    | RectangleNode
+  )[];
+  const matched = msg.matchStyles ? await bindColors(shapes) : 0;
 
   const source = msg.sourceId ? ((await figma.getNodeByIdAsync(msg.sourceId)) as SceneNode | null) : null;
   if (source && source.parent && 'width' in source) {
@@ -106,26 +111,41 @@ async function insert(msg: Extract<ToCode, { type: 'insert' }>) {
     frame.y = Math.round(c.y - frame.height / 2);
   }
   figma.currentPage.selection = [frame];
-  post({ type: 'inserted', layers: vectors.length, matched });
-  figma.notify(
-    `Вектор вставлен: ${vectors.length} слоёв` + (matched ? `, привязано к стилям: ${matched}` : ''),
-  );
+  post({ type: 'inserted', layers: shapes.length, matched });
+  figma.notify(`Вектор вставлен: ${shapes.length} фигур` + (matched ? `, привязано к стилям: ${matched}` : ''));
 }
+
+/**
+ * Names layers after the SVG ids: one top-level child per colour layer, and
+ * for grouped colours one child per shape (`<id>-<n>`). Skipped if Figma's
+ * import produced a different structure.
+ */
+function nameLayers(frame: FrameNode, layers: LayerInfo[]) {
+  if (frame.children.length !== layers.length) return;
+  frame.children.forEach((child, i) => {
+    const layer = layers[i];
+    child.name = layer.id;
+    if (child.type === 'GROUP' && child.children.length === layer.elements) {
+      child.children.forEach((c, k) => (c.name = `${layer.id}-${k + 1}`));
+    }
+  });
+}
+
+type Shape = VectorNode | EllipseNode | RectangleNode;
 
 interface NamedColor {
   rgb: [number, number, number];
-  apply(v: VectorNode, paint: SolidPaint): Promise<void>;
+  apply(v: Shape, paint: SolidPaint): Promise<void>;
 }
 
-/** Binds solid fills to local colour variables or paint styles with (almost) the same colour. */
-async function bindColors(vectors: VectorNode[]): Promise<number> {
-  const candidates: NamedColor[] = [];
-
+/** Solid colours defined in the document: local colour variables and paint styles. */
+async function documentColors(): Promise<NamedColor[]> {
+  const out: NamedColor[] = [];
   for (const variable of await figma.variables.getLocalVariablesAsync('COLOR')) {
     const coll = await figma.variables.getVariableCollectionByIdAsync(variable.variableCollectionId);
     const value = coll ? variable.valuesByMode[coll.defaultModeId] : undefined;
     if (!value || typeof value !== 'object' || !('r' in value)) continue;
-    candidates.push({
+    out.push({
       rgb: [value.r, value.g, value.b],
       apply: async (v, paint) => {
         v.fills = [figma.variables.setBoundVariableForPaint(paint, 'color', variable)];
@@ -135,15 +155,21 @@ async function bindColors(vectors: VectorNode[]): Promise<number> {
   for (const style of await figma.getLocalPaintStylesAsync()) {
     const p = style.paints.length === 1 ? style.paints[0] : null;
     if (!p || p.type !== 'SOLID' || (p.opacity ?? 1) < 1) continue;
-    candidates.push({
+    out.push({
       rgb: [p.color.r, p.color.g, p.color.b],
       apply: (v) => v.setFillStyleIdAsync(style.id),
     });
   }
+  return out;
+}
+
+/** Binds solid fills to local colour variables or paint styles with (almost) the same colour. */
+async function bindColors(shapes: Shape[]): Promise<number> {
+  const candidates = await documentColors();
   if (!candidates.length) return 0;
 
   let matched = 0;
-  for (const v of vectors) {
+  for (const v of shapes) {
     const fills = v.fills;
     if (!Array.isArray(fills) || fills.length !== 1 || fills[0].type !== 'SOLID') continue;
     const paint = fills[0] as SolidPaint;
@@ -164,4 +190,3 @@ async function bindColors(vectors: VectorNode[]): Promise<number> {
   }
   return matched;
 }
-

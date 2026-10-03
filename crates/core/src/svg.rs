@@ -7,11 +7,19 @@ use std::fmt::Write;
 
 use crate::fit::{FittedLoop, Seg};
 use crate::geom::P;
+use crate::shapes::Shape;
+
+/// One SVG element: a path (contour + holes) or a native primitive.
+pub(crate) struct SvgItem<'a> {
+    pub loops: Vec<&'a FittedLoop>,
+    /// Emit as `<circle>/<ellipse>/<rect>` (axis-aligned, no holes).
+    pub native: Option<Shape>,
+}
 
 pub(crate) struct SvgLayer<'a> {
     pub id: String,
     pub rgba: [u8; 4],
-    pub loops: &'a [FittedLoop],
+    pub items: Vec<SvgItem<'a>>,
 }
 
 pub(crate) fn hex(c: [u8; 4]) -> String {
@@ -74,7 +82,10 @@ fn push_nums(out: &mut String, num: &Num, vals: &[i64]) {
     }
 }
 
-pub(crate) fn path_data(loops: &[FittedLoop], precision: u8) -> String {
+pub(crate) fn path_data<'a>(
+    loops: impl IntoIterator<Item = &'a FittedLoop>,
+    precision: u8,
+) -> String {
     let num = Num {
         scale: 10f64.powi(precision as i32),
         prec: precision as usize,
@@ -128,6 +139,71 @@ pub(crate) fn path_data(loops: &[FittedLoop], precision: u8) -> String {
     d
 }
 
+fn num(v: f64, precision: u8) -> String {
+    let n = Num {
+        scale: 10f64.powi(precision as i32),
+        prec: precision as usize,
+    };
+    let mut s = String::new();
+    n.fmt(n.q(v), &mut s);
+    if s.starts_with('.') {
+        s.insert(0, '0');
+    } else if s.starts_with("-.") {
+        s.insert(1, '0');
+    }
+    s
+}
+
+fn write_item(s: &mut String, id: &str, rgba: [u8; 4], item: &SvgItem, precision: u8) {
+    let f = |v: f64| num(v, precision);
+    match item.native {
+        Some(Shape::Ellipse { c, rx, ry, .. }) if (rx - ry).abs() < 1e-9 => {
+            let _ = write!(
+                s,
+                r#"<circle id="{id}" cx="{}" cy="{}" r="{}""#,
+                f(c.x),
+                f(c.y),
+                f(rx)
+            );
+        }
+        Some(Shape::Ellipse { c, rx, ry, .. }) => {
+            let _ = write!(
+                s,
+                r#"<ellipse id="{id}" cx="{}" cy="{}" rx="{}" ry="{}""#,
+                f(c.x),
+                f(c.y),
+                f(rx),
+                f(ry)
+            );
+        }
+        Some(Shape::RoundRect { c, hw, hh, r, .. }) => {
+            let _ = write!(
+                s,
+                r#"<rect id="{id}" x="{}" y="{}" width="{}" height="{}""#,
+                f(c.x - hw),
+                f(c.y - hh),
+                f(hw * 2.0),
+                f(hh * 2.0)
+            );
+            if r > 0.0 {
+                let _ = write!(s, r#" rx="{}""#, f(r));
+            }
+        }
+        None => {
+            let _ = write!(s, r#"<path id="{id}""#);
+        }
+    }
+    let _ = write!(s, r#" fill="{}""#, hex(rgba));
+    if rgba[3] < 255 {
+        let _ = write!(s, r#" fill-opacity="{:.3}""#, rgba[3] as f32 / 255.0);
+    }
+    if item.native.is_none() {
+        let d = path_data(item.loops.iter().copied(), precision);
+        let _ = write!(s, r#" fill-rule="evenodd" d="{d}""#);
+    }
+    s.push_str("/>\n");
+}
+
 pub(crate) fn write_svg(w: u32, h: u32, layers: &[SvgLayer], precision: u8) -> String {
     let mut s = String::new();
     let _ = write!(
@@ -136,16 +212,23 @@ pub(crate) fn write_svg(w: u32, h: u32, layers: &[SvgLayer], precision: u8) -> S
     );
     s.push('\n');
     for l in layers {
-        let d = path_data(l.loops, precision);
-        if d.is_empty() {
-            continue;
+        match l.items.len() {
+            0 => {}
+            1 => write_item(&mut s, &l.id, l.rgba, &l.items[0], precision),
+            _ => {
+                let _ = writeln!(s, r#"<g id="{}">"#, l.id);
+                for (k, item) in l.items.iter().enumerate() {
+                    write_item(
+                        &mut s,
+                        &format!("{}-{}", l.id, k + 1),
+                        l.rgba,
+                        item,
+                        precision,
+                    );
+                }
+                s.push_str("</g>\n");
+            }
         }
-        let _ = write!(s, r#"<path id="{}" fill="{}""#, l.id, hex(l.rgba));
-        if l.rgba[3] < 255 {
-            let _ = write!(s, r#" fill-opacity="{:.3}""#, l.rgba[3] as f32 / 255.0);
-        }
-        let _ = write!(s, r#" fill-rule="evenodd" d="{d}"/>"#);
-        s.push('\n');
     }
     s.push_str("</svg>\n");
     s

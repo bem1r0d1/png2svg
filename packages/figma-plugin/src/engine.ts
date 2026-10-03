@@ -57,5 +57,10 @@ function toCoreOptions(o: Partial<ConvertOptions>): Record<string, unknown> {
   if (o.smoothness != null) out.smoothness = o.smoothness;
   if (o.cornerThreshold != null) out.cornerThreshold = o.cornerThreshold;
   if (o.snapAxes != null) out.snapAxes = o.snapAxes;
+  if (o.shapes != null) out.shapes = o.shapes;
+  if (o.groupBy) out.groupBy = o.groupBy;
+  if (o.speckleArea != null && o.speckleArea > 0) out.speckleArea = Math.round(o.speckleArea);
+  if (o.palette?.length) out.palette = o.palette;
+  if (o.paletteTolerance != null) out.paletteTolerance = o.paletteTolerance;
   return out;
 }

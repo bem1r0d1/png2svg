@@ -88,44 +88,27 @@ pub(crate) fn fit_loop(raw: &[P], prm: &Params) -> FittedLoop {
     let n = poly.n();
     let scale = prm.corner_scale.min(poly.len / 8.0).max(0.5);
 
-    // Turning angle at each point, measured over ±scale arc length.
-    let angles: Vec<f64> = (0..n)
-        .map(|i| {
-            let s = poly.cum[i];
-            let b = poly.at(s - scale);
-            let f = poly.at(s + scale);
-            let v1 = pts[i] - b;
-            let v2 = f - pts[i];
-            v1.cross(v2).atan2(v1.dot(v2)).abs()
-        })
-        .collect();
-
-    // Non-maximum suppression within the same window.
-    let mut corners: Vec<usize> = Vec::new();
-    for i in 0..n {
-        if angles[i] < prm.corner_angle {
-            continue;
-        }
-        let mut is_max = true;
-        let mut k = 1;
-        while k < n && poly.arc(i, (i + k) % n) <= scale {
-            if angles[(i + k) % n] > angles[i] {
-                is_max = false;
-                break;
+    // Corners are found at two scales: the normal one (robust to noise) and a
+    // fine one, so that small features (gear teeth, serifs) keep their corners.
+    // Corners are found at two scales. The fine scale resolves small features
+    // (gear teeth, serifs) whose corners the normal scale smears into one; it
+    // needs a stricter angle and wins where both find a corner.
+    let mut corners = find_corners(&poly, scale, prm.corner_angle);
+    let fine = 1.0f64.min(scale);
+    if fine < scale {
+        let mut merged = find_corners(&poly, fine, prm.corner_angle + 15f64.to_radians());
+        for &c in &corners {
+            if !merged
+                .iter()
+                .any(|&k| poly.arc(k, c).min(poly.arc(c, k)) < 1.5)
+            {
+                merged.push(c);
             }
-            k += 1;
         }
-        k = 1;
-        while is_max && k < n && poly.arc((i + n - k) % n, i) <= scale {
-            if angles[(i + n - k) % n] >= angles[i] {
-                is_max = false;
-            }
-            k += 1;
-        }
-        if is_max {
-            corners.push(i);
-        }
+        merged.sort_unstable();
+        corners = merged;
     }
+    let angles = turning_angles(&poly, scale);
 
     if corners.is_empty() {
         return fit_smooth_closed(&pts, &poly, &angles, prm, scale);
@@ -186,7 +169,8 @@ pub(crate) fn fit_loop(raw: &[P], prm: &Params) -> FittedLoop {
             continue;
         }
         if let Some(ip) = intersect_lines(c1, d1, c2, d2) {
-            if ip.dist(pts[c]) < 1.6 {
+            let limit = (0.3 * max_back.min(max_fwd)).min(1.6);
+            if ip.dist(pts[c]) < limit {
                 cpos[ci] = ip;
                 let mut k = 1;
                 while k < n && poly.arc((c + n - k) % n, c) < cut {
@@ -221,17 +205,35 @@ pub(crate) fn fit_loop(raw: &[P], prm: &Params) -> FittedLoop {
         segs_pts.push(s);
     }
 
-    // Classify straight segments, then snap near-axis lines.
-    let is_line: Vec<bool> = segs_pts
+    // Classify straight segments. Points within ~1 px of a corner are ignored:
+    // anti-aliasing rounds corners, which would otherwise turn straight sides
+    // into curves. Corners between two straight sides are then moved to the
+    // intersection of the fitted side lines (polygon regularisation).
+    let lines: Vec<Option<(P, P)>> = segs_pts
         .iter()
-        .map(|s| {
-            let (a, b) = (s[0], *s.last().unwrap());
-            a.dist(b) > 1e-6
-                && s[1..s.len() - 1]
-                    .iter()
-                    .all(|&p| dist_to_segment(p, a, b) <= prm.line_tolerance)
-        })
+        .map(|s| straight_side(s, prm.line_tolerance))
         .collect();
+    let is_line: Vec<bool> = lines.iter().map(Option::is_some).collect();
+    for ci in 0..nc {
+        let prev = (ci + nc - 1) % nc;
+        if let (Some((c1, d1)), Some((c2, d2))) = (lines[prev], lines[ci]) {
+            if d1.cross(d2).abs() > 0.15 {
+                if let Some(ip) = intersect_lines(c1, d1, c2, d2) {
+                    // Never extrapolate far beyond short sides (tiny teeth become spikes).
+                    let side = |k: usize| segs_pts[k][0].dist(*segs_pts[k].last().unwrap());
+                    let limit = (0.15 * side(prev).min(side(ci))).min(2.5);
+                    if ip.dist(cpos[ci]) < limit {
+                        cpos[ci] = ip;
+                    }
+                }
+            }
+        }
+    }
+    for ci in 0..nc {
+        let last = segs_pts[ci].len() - 1;
+        segs_pts[ci][0] = cpos[ci];
+        segs_pts[ci][last] = cpos[(ci + 1) % nc];
+    }
     if prm.snap_axes {
         let tol = 2.5f64.to_radians().tan();
         for ci in 0..nc {
@@ -275,6 +277,98 @@ pub(crate) fn fit_loop(raw: &[P], prm: &Params) -> FittedLoop {
         push_cubics(s, t1, t2, err2, prm.line_tolerance, &mut out.segs);
     }
     out
+}
+
+/// Turning angle at each point: the angle between the directions of the
+/// incoming and outgoing sides, each measured over `scale` px of arc and
+/// skipping a small gap around the point. The gap makes the measure insensitive
+/// to anti-aliased rounding and to the true vertex lying between two samples.
+fn turning_angles(poly: &Poly, scale: f64) -> Vec<f64> {
+    let gap = 0.5f64.min(scale * 0.25);
+    let margin = if poly.len < 120.0 {
+        10f64.to_radians()
+    } else {
+        0.0
+    };
+    (0..poly.n())
+        .map(|i| {
+            let s = poly.cum[i];
+            let turn = |v1: P, v2: P| v1.cross(v2).atan2(v1.dot(v2)).abs();
+            let p = poly.p[i];
+            // Max of the gap measure (finds vertices lying between samples)
+            // and the plain point-centred one.
+            // On small contours the gap measure overshoots at tiny rounded
+            // features, so there it must beat the threshold by a margin.
+            (turn(
+                poly.at(s - gap) - poly.at(s - gap - scale),
+                poly.at(s + gap + scale) - poly.at(s + gap),
+            ) - margin)
+                .max(turn(p - poly.at(s - scale), poly.at(s + scale) - p))
+        })
+        .collect()
+}
+
+/// Points whose turning angle exceeds `min_angle` and is maximal within ±scale.
+fn find_corners(poly: &Poly, scale: f64, min_angle: f64) -> Vec<usize> {
+    let n = poly.n();
+    let angles = turning_angles(poly, scale);
+    let mut corners = Vec::new();
+    for i in 0..n {
+        if angles[i] < min_angle {
+            continue;
+        }
+        let mut is_max = true;
+        let mut k = 1;
+        while k < n && poly.arc(i, (i + k) % n) <= scale {
+            if angles[(i + k) % n] > angles[i] {
+                is_max = false;
+                break;
+            }
+            k += 1;
+        }
+        k = 1;
+        while is_max && k < n && poly.arc((i + n - k) % n, i) <= scale {
+            if angles[(i + n - k) % n] >= angles[i] {
+                is_max = false;
+            }
+            k += 1;
+        }
+        if is_max {
+            corners.push(i);
+        }
+    }
+    corners
+}
+
+/// If the segment is straight (ignoring ~1 px at each end), its fitted line.
+fn straight_side(s: &[P], tol: f64) -> Option<(P, P)> {
+    let (a, b) = (s[0], *s.last().unwrap());
+    let len = a.dist(b);
+    if len < 1e-6 {
+        return None;
+    }
+    if s.len() <= 2 {
+        return Some((a, (b - a).norm()));
+    }
+    let trim = if len > 4.0 { 1.0 } else { 0.0 };
+    let inner: Vec<P> = s
+        .iter()
+        .copied()
+        .filter(|&p| p.dist(a) >= trim && p.dist(b) >= trim)
+        .collect();
+    if inner.len() < 3 || len < 3.0 {
+        // Short side: plain chord test.
+        let ok = s[1..s.len() - 1]
+            .iter()
+            .all(|&p| dist_to_segment(p, a, b) <= tol);
+        return ok.then(|| (a, (b - a).norm()));
+    }
+    let (c, d, _) = fit_line(&inner);
+    let normal = P::new(-d.y, d.x);
+    let ok = inner.iter().all(|&p| (p - c).dot(normal).abs() <= tol)
+        && s.iter()
+            .all(|&p| (p - c).dot(normal).abs() <= tol * 1.5 + 0.2);
+    ok.then_some((c, d))
 }
 
 fn polygon(pts: &[P]) -> FittedLoop {
