@@ -44,6 +44,9 @@ async function build() {
     // Guard against a literal "</script>" inside the bundle.
     .replace('/*__JS__*/', () => ui.replace(/<\/script/gi, '<\\/script'));
   writeFileSync(resolve(dist, 'ui.html'), html);
+  // The same page works standalone as the web version.
+  mkdirSync(resolve(dist, 'web'), { recursive: true });
+  writeFileSync(resolve(dist, 'web/index.html'), html);
 
   const code = await bundle('src/code.ts', { target: 'es2017' });
   writeFileSync(resolve(dist, 'code.js'), code);

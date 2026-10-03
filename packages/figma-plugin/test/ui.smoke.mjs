@@ -79,6 +79,18 @@ await page.evaluate(() => send({ type: 'empty', reason: 'Выделите сло
 await ui.locator('#preview.empty').waitFor();
 assert.equal(await ui.locator('#insert-replace').isDisabled(), true);
 
+// Web version: the same page opened directly (not inside Figma).
+const web = await browser.newPage({ viewport: { width: 1000, height: 900 } });
+web.on('pageerror', (e) => errors.push(String(e)));
+await web.goto(pathToFileURL(resolve(here, '../dist/web/index.html')).href);
+await web.locator('.topbar').waitFor();
+await web.setInputFiles('#file', resolve(here, '../../../corpus/png/badge-jpeg.png'));
+await web.locator('#stats').filter({ hasText: 'контуров' }).waitFor({ timeout: 15000 });
+assert.match(await web.locator('#detected').textContent(), /шум/);
+const [download] = await Promise.all([web.waitForEvent('download'), web.locator('#insert-replace').click()]);
+assert.equal(download.suggestedFilename(), 'badge-jpeg.svg');
+await web.screenshot({ path: resolve(out, 'web.png') });
+
 await browser.close();
 assert.deepEqual(errors, [], `console errors/warnings: ${errors.join('\n')}`);
 console.log('ui smoke test passed; screenshot:', resolve(out, 'ui-split.png'));

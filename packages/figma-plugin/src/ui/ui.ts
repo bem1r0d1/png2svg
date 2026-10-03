@@ -51,7 +51,9 @@ const els = {
   replace: $<HTMLButtonElement>('insert-replace'),
 };
 
-const toCode = (msg: ToCode) => parent.postMessage({ pluginMessage: msg }, '*');
+/** Outside Figma (the web version) the page is not framed by the plugin host. */
+const IN_FIGMA = window.parent !== window;
+const toCode = (msg: ToCode) => IN_FIGMA && parent.postMessage({ pluginMessage: msg }, '*');
 
 // ---------------------------------------------------------------- state
 
@@ -290,7 +292,7 @@ function showMessage(text: string, error = false) {
 
 function setActionsEnabled(on: boolean) {
   els.beside.disabled = !on;
-  els.replace.disabled = !on || !source?.id;
+  els.replace.disabled = !on || (IN_FIGMA && !source?.id);
 }
 
 // ---------------------------------------------------------------- events
@@ -380,8 +382,49 @@ function insert(mode: InsertMode) {
     matchStyles: els.match.checked,
   });
 }
-els.beside.addEventListener('click', () => insert('beside'));
-els.replace.addEventListener('click', () => insert('replace'));
+function download() {
+  if (!result || !source) return;
+  const url = URL.createObjectURL(new Blob([result.svg], { type: 'image/svg+xml' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${source.name || 'image'}.svg`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  showMessage('SVG сохранён');
+}
+
+async function copySvg() {
+  if (!result) return;
+  try {
+    await navigator.clipboard.writeText(result.svg);
+    showMessage('SVG скопирован — вставьте в Figma через Ctrl/Cmd+V');
+  } catch {
+    showMessage('Не удалось скопировать', true);
+  }
+}
+
+if (IN_FIGMA) {
+  els.beside.addEventListener('click', () => insert('beside'));
+  els.replace.addEventListener('click', () => insert('replace'));
+} else {
+  // Web version: download / copy instead of inserting into a document.
+  document.body.classList.add('web');
+  els.beside.textContent = 'Копировать SVG';
+  els.replace.textContent = 'Скачать SVG';
+  els.beside.addEventListener('click', () => void copySvg());
+  els.replace.addEventListener('click', download);
+  els.match.checked = false;
+  els.match.parentElement!.hidden = true;
+  options.palette = [];
+  els.placeholderText.textContent = 'Перетащите PNG / JPG сюда, вставьте из буфера (Ctrl+V) или выберите файл';
+}
+
+// Paste an image from the clipboard.
+document.addEventListener('paste', (e) => {
+  const item = [...(e.clipboardData?.items ?? [])].find((i) => i.type.startsWith('image/'));
+  const f = item?.getAsFile();
+  if (f) void openFile(f);
+});
 
 // Files: picker and drag & drop.
 async function openFile(f: File) {

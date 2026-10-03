@@ -100,3 +100,22 @@ footer {
 .button.primary { background: var(--brand); color: var(--on-brand); }
 .button.secondary { background: transparent; color: var(--text); border-color: var(--border); }
 .button:disabled { opacity: .4; cursor: default; }
+
+/* ---- web version (outside Figma) ---- */
+.topbar { display: none; }
+body.web { background: var(--bg-2); height: auto; min-height: 100%; }
+body.web .topbar {
+  display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+  max-width: 960px; margin: 0 auto; padding: 16px 16px 8px; font-size: 13px;
+}
+body.web .topbar strong { font-size: 16px; }
+body.web .topbar .links { margin-left: auto; display: flex; gap: 14px; }
+body.web .topbar a { color: var(--brand); text-decoration: none; }
+body.web main {
+  max-width: 960px; margin: 0 auto 24px; height: auto; background: var(--bg);
+  border: 1px solid var(--border); border-radius: 10px; font-size: 12px;
+}
+body.web .preview { min-height: min(62vh, 560px); }
+@media (prefers-color-scheme: dark) {
+  body.web { --bg: #1e1e1e; --bg-2: #141414; --text: #eeeeee; --muted: #a0a0a0; --border: #333333; --check-a: #2a2a2a; }
+}
