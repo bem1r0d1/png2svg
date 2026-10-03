@@ -1,0 +1,10 @@
+[package]
+name = "png2svg"
+description = "Command-line PNG → SVG converter"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+png2svg-core = { path = "../core" }
+png2svg-metrics = { path = "../metrics" }

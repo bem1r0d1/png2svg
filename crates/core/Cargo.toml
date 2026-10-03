@@ -1,0 +1,13 @@
+[package]
+name = "png2svg-core"
+description = "High-quality raster to vector tracing tuned for Figma"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+serde = ["dep:serde"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"], optional = true }
