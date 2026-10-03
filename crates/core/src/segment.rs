@@ -322,3 +322,101 @@ pub(crate) fn absorb_ringing(l: &mut Labels, pal: &crate::quantize::Palette, max
         }
     }
 }
+
+/// Colours that are only the transition between two other colours (wide or
+/// blurry edges produce whole bands of them) are not real layers: their pixels
+/// are re-expressed as blends of the two neighbouring colours, which turns the
+/// band back into a sub-pixel edge between them.
+pub(crate) fn resolve_blend_layers(l: &mut Labels, r: &Raster, pal: &Palette) {
+    let nl = pal.colors.len();
+    let (w, h) = (l.w as isize, l.h as isize);
+    let mut area = vec![0usize; nl];
+    let mut near_edge = vec![0usize; nl];
+    let mut contact = vec![vec![0usize; nl]; nl];
+    for y in 0..h {
+        for x in 0..w {
+            let i = (y * w + x) as usize;
+            let a = l.a[i] as usize;
+            area[a] += 1;
+            let mut edge = false;
+            for dy in -2..=2isize {
+                for dx in -2..=2isize {
+                    let (nx, ny) = (x + dx, y + dy);
+                    if nx < 0 || ny < 0 || nx >= w || ny >= h {
+                        continue;
+                    }
+                    let b = l.a[(ny * w + nx) as usize] as usize;
+                    if b != a {
+                        edge = true;
+                        contact[a][b] += 1;
+                    }
+                }
+            }
+            near_edge[a] += usize::from(edge);
+        }
+    }
+    let pms: Vec<[f32; 4]> = pal.colors.iter().map(|c| c.pm).collect();
+    // parents[L] = (p, q) if L is a thin band whose colour blends p and q.
+    let mut parents: Vec<Option<(u16, u16)>> = vec![None; nl];
+    for c in 0..nl {
+        if area[c] == 0 || (near_edge[c] as f32) < 0.7 * area[c] as f32 {
+            continue;
+        }
+        let mut nb: Vec<usize> = (0..nl).filter(|&b| b != c && contact[c][b] > 0).collect();
+        nb.sort_by_key(|&b| std::cmp::Reverse(contact[c][b]));
+        nb.truncate(5);
+        let mut best = (0.045f32, None);
+        for (i, &p) in nb.iter().enumerate() {
+            for &q in &nb[i + 1..] {
+                if area[p] < area[c] / 2 || area[q] < area[c] / 2 {
+                    continue;
+                }
+                let d = sub(pms[q], pms[p]);
+                let dd = dot(d, d);
+                if dd < 0.01 {
+                    continue;
+                }
+                let t = dot(sub(pms[c], pms[p]), d) / dd;
+                if !(0.08..=0.92).contains(&t) {
+                    continue;
+                }
+                let e = sub(pms[c], add(pms[p], scale(d, t)));
+                let res = dot(e, e).sqrt();
+                if res < best.0 {
+                    best = (res, Some((p as u16, q as u16)));
+                }
+            }
+        }
+        parents[c] = best.1;
+    }
+    if parents.iter().all(Option::is_none) {
+        return;
+    }
+    for i in 0..l.a.len() {
+        let (a, b) = (l.a[i] as usize, l.b[i] as usize);
+        let pq = parents[a].or(parents[b]);
+        let Some((p, q)) = pq else { continue };
+        // A parent that is itself a band cannot be used.
+        if parents[p as usize].is_some() || parents[q as usize].is_some() {
+            continue;
+        }
+        let px = r.pm[i];
+        let d = sub(pms[q as usize], pms[p as usize]);
+        let dd = dot(d, d);
+        let s = (dot(sub(px, pms[p as usize]), d) / dd).clamp(0.0, 1.0);
+        // Coverage of p is 1 − s.
+        if s <= 0.5 {
+            l.a[i] = p;
+            l.b[i] = q;
+            l.t[i] = 1.0 - s;
+        } else {
+            l.a[i] = q;
+            l.b[i] = p;
+            l.t[i] = s;
+        }
+        if l.t[i] > 0.999 {
+            l.b[i] = l.a[i];
+            l.t[i] = 1.0;
+        }
+    }
+}

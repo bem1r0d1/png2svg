@@ -158,6 +158,23 @@ fn main() -> Result<()> {
                     &render_svg(&svg, 128, 128)?,
                 )?;
             }
+            "styled-lettering" => {
+                // Like generated / upscaled artwork: rendered at half size,
+                // upscaled with bilinear filtering, slightly noisy, JPEG.
+                let small = to_image(&render_svg(&svg, w / 2, h / 2)?);
+                let up = from_image(&imageops::resize(
+                    &small,
+                    w * 2,
+                    h * 2,
+                    imageops::FilterType::Triangle,
+                ));
+                let big = render_svg(&svg, w * 2, h * 2)?;
+                degraded(
+                    &format!("{stem}-generated"),
+                    &jpeg_roundtrip(&add_noise(&up, 3.0), 85)?,
+                    &big,
+                )?;
+            }
             "glyphs" => degraded(
                 &format!("{stem}-aliased"),
                 &render_svg(&crisp(&svg), w, h)?,
