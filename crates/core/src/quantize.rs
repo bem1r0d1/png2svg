@@ -410,6 +410,7 @@ pub(crate) fn build_palette(r: &Raster, mixed: &[bool], p: &Params) -> Palette {
             agglomerate(&mut cl, usize::MAX, |d, a, b| {
                 let (lo, hi) = if a.w < b.w { (a.w, b.w) } else { (b.w, a.w) };
                 d < md * 0.6
+                    || (d < md && !(flat(a) && flat(b)))
                     || (d < md * 3.0
                         && !(flat(a) && flat(b))
                         && (d < 2.5 * a.spread().max(b.spread()) || lo < hi * 0.05))
