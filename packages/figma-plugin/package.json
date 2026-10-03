@@ -1,0 +1,22 @@
+{
+  "name": "png2svg-figma-plugin",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Figma plugin: high-quality image → vector conversion (png2svg)",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "build:wasm": "cargo build -p png2svg-wasm --target wasm32-unknown-unknown --release",
+    "build": "npm run build:wasm && node build.mjs",
+    "build:js": "node build.mjs",
+    "watch": "node build.mjs --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test test/engine.test.mjs && node test/ui.smoke.mjs"
+  },
+  "devDependencies": {
+    "@figma/plugin-typings": "^1.120.0",
+    "esbuild": "^0.25.0",
+    "playwright": "^1.56.1",
+    "typescript": "^5.6.0"
+  }
+}

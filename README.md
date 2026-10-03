@@ -11,6 +11,7 @@
 | `crates/core` | Ядро на Rust: весь пайплайн конвертации (без зависимостей) |
 | `crates/cli` | CLI `png2svg` |
 | `crates/wasm` | WebAssembly-обёртка для Figma-плагина |
+| `packages/figma-plugin` | Figma-плагин: UI + WASM в Web Worker, вставка вектора на место картинки |
 | `crates/metrics` | Рендер SVG обратно (resvg) и метрики качества: SSIM, ΔE OKLab; бенчмарк по корпусу |
 | `corpus/src` | Эталонные векторные исходники; `corpus/png` — растры, полученные из них |
 | `corpus/baseline.json` | Базовые метрики; CI падает при регрессии качества |
@@ -23,6 +24,21 @@ cargo build --release
 ./target/release/png2svg icon.png -p icon -s 0.7      # пресет и гладкость
 ./target/release/png2svg --help
 ```
+
+## Figma-плагин
+
+```sh
+cd packages/figma-plugin
+npm install
+npm run build        # собирает WASM и dist/code.js + dist/ui.html
+npm test             # движок в Node + UI-смоук в Chromium
+```
+
+В Figma Desktop: **Plugins → Development → Import plugin from manifest…** → `packages/figma-plugin/manifest.json`.
+
+Как пользоваться: выделите слой с картинкой (или перетащите PNG в окно плагина), подберите пресет и ползунки — превью обновляется сразу; режим «Сравнить» показывает оригинал и вектор со шторкой. «Заменить» вставляет вектор ровно на место картинки (оригинал скрывается, не удаляется), «Вставить рядом» — справа от неё. Слои называются по цвету (`color-1a2b3c`), а цвета, совпадающие с локальными Color Styles / Variables (ΔE < 2), к ним привязываются.
+
+Всё считается локально в WebAssembly, сеть плагину не нужна.
 
 ## Как работает пайплайн
 
